@@ -1,0 +1,9 @@
+[submodule "External/spdlog"]
+	path = External/spdlog
+	url = https://github.com/gabime/spdlog.git
+[submodule "External/fmt"]
+	path = External/fmt
+	url = https://github.com/fmtlib/fmt.git
+[submodule "External/argparse"]
+	path = External/argparse
+	url = https://github.com/p-ranav/argparse.git
