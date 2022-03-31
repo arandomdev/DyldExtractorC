@@ -1,4 +1,5 @@
 #include "Context.h"
+#include "LoadCommands.h"
 
 #include <exception>
 
@@ -68,7 +69,7 @@ Context<_ro>::Context(
         cmdOff += cmd->cmdsize;
     }
 
-    for (auto const seg : getLoadCommand<true, segment_command_64>()) {
+    for (auto const seg : getLoadCommand<true, LC::segment_command_64>()) {
         segments.emplace_back(seg);
     }
 }

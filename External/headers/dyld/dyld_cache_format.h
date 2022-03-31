@@ -347,6 +347,8 @@ struct dyld_cache_slide_info2
 //    } while (delta != 0);
 //
 //
+#pragma warning( push )
+#pragma warning( disable : 4200 )
 struct dyld_cache_slide_info3
 {
     uint32_t    version;            // currently 3
@@ -355,6 +357,7 @@ struct dyld_cache_slide_info3
     uint64_t    auth_value_add;
     uint16_t    page_starts[/* page_starts_count */];
 };
+#pragma warning( pop )
 
 #define DYLD_CACHE_SLIDE_V3_PAGE_ATTR_NO_REBASE    0xFFFF    // page has no rebasing
 

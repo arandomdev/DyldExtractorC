@@ -1,10 +1,11 @@
-#include <argparse/argparse.hpp>
-#include <chrono>
-#include <dyld/dyld_cache_format.h>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
-#include <thread>
 
+#include <argparse/argparse.hpp>
+#include <dyld/dyld_cache_format.h>
+
+#include <Converter/OffsetOptimizer.h>
 #include <Dyld/Context.h>
 #include <Logger/ActivityLogger.h>
 #include <Macho/Context.h>
@@ -61,6 +62,11 @@ ProgramArguments parseArgs(int argc, char *argv[]) {
         args.outputPath = program.present<std::string>("--output");
     } catch (const std::runtime_error &err) {
         std::cerr << err.what() << std::endl;
+        std::exit(1);
+    }
+
+    if (args.extractImage && !args.outputPath) {
+        std::cerr << "Output path is required for extraction" << std::endl;
         std::exit(1);
     }
 
@@ -122,6 +128,17 @@ void extractImage(Dyld::Context *dyldCtx, ProgramArguments args) {
     auto machoCtx = dyldCtx->createMachoCtx<false>(imageInfo);
     Utils::ExtractionContext extractionCtx(dyldCtx, &machoCtx, &activity,
                                            activity.logger);
+
+    // Convert
+    auto writeProcedures = Converter::optimizeOffsets(extractionCtx);
+
+    // Write
+    std::ofstream outFile(*args.outputPath, std::ios_base::binary);
+    for (auto procedure : writeProcedures) {
+        outFile.seekp(procedure.writeOffset);
+        outFile.write(procedure.source, procedure.size);
+    }
+    outFile.close();
 }
 
 int main(int argc, char *argv[]) {
