@@ -2,3 +2,5 @@
 Extract Binaries from Apple's Dyld Shared Cache to be useful in a disassembler.
 
 This is a alternative version of the main project [DyldExtractor](https://github.com/arandomdev/DyldExtractor). Changing the language to c++ allows copying Apple's code for better output. Though for now, the main version should be used.
+
+This tool requires the host machine to use Little Endian, but that shouldn't affect anyone.

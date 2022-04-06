@@ -131,8 +131,8 @@ bool Context::headerContainsMember(std::size_t memberOffset) const {
     return memberOffset < header->mappingOffset;
 }
 
-template <>
-Macho::Context<true>
+template <bool ro, class P>
+Macho::Context<ro, P>
 Context::createMachoCtx(const dyld_cache_image_info *imageInfo) const {
     auto getMappings = [](std::vector<const dyld_cache_mapping_info *> info) {
         std::vector<Macho::MappingInfo> mappings(info.size());
@@ -145,57 +145,61 @@ Context::createMachoCtx(const dyld_cache_image_info *imageInfo) const {
     auto [imageOffset, mainCache] = convertAddr(imageInfo->address);
     auto mainMappings = getMappings(mainCache->_mappings);
 
-    std::vector<std::tuple<bio::mapped_file, std::vector<Macho::MappingInfo>>>
-        subFiles;
-    subFiles.reserve(_subcaches.size());
+    if constexpr (ro) {
+        // Make a read only macho context with the files already open
+        std::vector<
+            std::tuple<bio::mapped_file, std::vector<Macho::MappingInfo>>>
+            subFiles;
+        subFiles.reserve(_subcaches.size());
 
-    // Add this cache if necessary
-    if (file != mainCache->file) {
-        subFiles.emplace_back(_cacheFile, getMappings(_mappings));
-    }
-
-    // Add subcaches
-    for (auto &cache : _subcaches) {
-        if (cache.file != mainCache->file) {
-            subFiles.emplace_back(cache._cacheFile,
-                                  getMappings(cache._mappings));
+        // Add this cache if necessary
+        if (file != mainCache->file) {
+            subFiles.emplace_back(_cacheFile, getMappings(_mappings));
         }
-    }
 
-    return Macho::Context<true>(imageOffset, mainCache->_cacheFile,
-                                mainMappings, subFiles);
+        // Add subcaches
+        for (auto &cache : _subcaches) {
+            if (cache.file != mainCache->file) {
+                subFiles.emplace_back(cache._cacheFile,
+                                      getMappings(cache._mappings));
+            }
+        }
+
+        return Macho::Context<true, P>(imageOffset, mainCache->_cacheFile,
+                                       mainMappings, subFiles);
+    } else {
+        // Make a writable macho context by giving the paths
+        std::vector<std::tuple<fs::path, std::vector<Macho::MappingInfo>>>
+            subFiles;
+        subFiles.reserve(_subcaches.size());
+
+        // Add this cache if necessary
+        if (file != mainCache->file) {
+            subFiles.emplace_back(_cachePath, getMappings(_mappings));
+        }
+
+        // Add subcaches
+        for (auto &cache : _subcaches) {
+            if (cache.file != mainCache->file) {
+                subFiles.emplace_back(cache._cachePath,
+                                      getMappings(cache._mappings));
+            }
+        }
+
+        return Macho::Context<false, P>(imageOffset, mainCache->_cachePath,
+                                        mainMappings, subFiles);
+    }
 }
 
-template <>
-Macho::Context<false>
-Context::createMachoCtx(const dyld_cache_image_info *imageInfo) const {
-    auto getMappings = [](std::vector<const dyld_cache_mapping_info *> info) {
-        std::vector<Macho::MappingInfo> mappings(info.size());
-        for (auto i : info) {
-            mappings.emplace_back(i);
-        }
-        return mappings;
-    };
-
-    auto [imageOffset, mainCache] = convertAddr(imageInfo->address);
-    auto mainMappings = getMappings(mainCache->_mappings);
-
-    std::vector<std::tuple<fs::path, std::vector<Macho::MappingInfo>>> subFiles;
-    subFiles.reserve(_subcaches.size());
-
-    // Add this cache if necessary
-    if (file != mainCache->file) {
-        subFiles.emplace_back(_cachePath, getMappings(_mappings));
-    }
-
-    // Add subcaches
-    for (auto &cache : _subcaches) {
-        if (cache.file != mainCache->file) {
-            subFiles.emplace_back(cache._cachePath,
-                                  getMappings(cache._mappings));
-        }
-    }
-
-    return Macho::Context<false>(imageOffset, mainCache->_cachePath,
-                                 mainMappings, subFiles);
-}
+template Macho::Context<true, Utils::Pointer32>
+Context::createMachoCtx<true, Utils::Pointer32>(
+    const dyld_cache_image_info *imageInfo) const;
+template Macho::Context<true, Utils::Pointer64>
+Context::createMachoCtx<true, Utils::Pointer64>(
+    const dyld_cache_image_info *imageInfo) const;
+template Macho::Context<false, Utils::Pointer32>
+Context::createMachoCtx<false, Utils::Pointer32>(
+    const dyld_cache_image_info *imageInfo) const;
+template Macho::Context<false, Utils::Pointer64>
+Context::createMachoCtx<false, Utils::Pointer64>(
+    const dyld_cache_image_info *imageInfo) const;

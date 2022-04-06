@@ -6,6 +6,13 @@ message("CMAKE_PROJECT_VERSION = ${CMAKE_VERSION}")
 
 project ("DyldExtractorC")
 
+# Check endianness
+include (TestBigEndian)
+TEST_BIG_ENDIAN(IS_BIG_ENDIAN)
+if(IS_BIG_ENDIAN)
+	message(FATAL_ERROR "Big Endian hosts are not supported.")
+endif()
+
 # Set c++ 20
 set (CMAKE_CXX_STANDARD 20)
 set (CMAKE_CXX_STANDARD_REQUIRED ON)

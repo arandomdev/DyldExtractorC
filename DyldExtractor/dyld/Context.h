@@ -45,8 +45,8 @@ class Context {
     /// private access.
     ///
     /// @param imageInfo The image info of the MachO file.
-    template <bool _readonly>
-    Macho::Context<_readonly>
+    template <bool ro, class P>
+    Macho::Context<ro, P>
     createMachoCtx(const dyld_cache_image_info *imageInfo) const;
 
   private:

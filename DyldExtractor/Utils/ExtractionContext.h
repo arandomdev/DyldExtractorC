@@ -9,9 +9,10 @@
 
 namespace Utils {
 
+template<class P>
 struct ExtractionContext {
     Dyld::Context *dyldCtx;
-    Macho::Context<false> *machoCtx;
+    Macho::Context<false, P> *machoCtx;
     ActivityLogger *activity;
     std::shared_ptr<spdlog::logger> logger;
 };

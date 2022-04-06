@@ -1,19 +1,21 @@
 #include "OffsetOptimizer.h"
-#include "Macho/LoadCommands.h"
+#include "Macho/Loader.h"
 
 #include <exception>
 
 using namespace Converter;
 
 // Update all linkedit data commands
-void updateLinkedit(Macho::Context<false> *machoCtx, int32_t shiftDelta) {
+template <class P>
+void updateLinkedit(Macho::Context<false, P> *machoCtx, int32_t shiftDelta) {
     for (auto linkeditData :
-         machoCtx->getLoadCommand<true, Macho::LC::linkedit_data_command>()) {
+         machoCtx
+             ->getLoadCommand<true, Macho::Loader::linkedit_data_command>()) {
         linkeditData->dataoff += linkeditData->dataoff ? shiftDelta : 0;
     }
 
     auto dyldInfo =
-        machoCtx->getLoadCommand<false, Macho::LC::dyld_info_command>();
+        machoCtx->getLoadCommand<false, Macho::Loader::dyld_info_command>();
     if (dyldInfo != nullptr) {
         dyldInfo->rebase_off += dyldInfo->rebase_off ? shiftDelta : 0;
         dyldInfo->bind_off += dyldInfo->bind_off ? shiftDelta : 0;
@@ -22,14 +24,15 @@ void updateLinkedit(Macho::Context<false> *machoCtx, int32_t shiftDelta) {
         dyldInfo->export_off += dyldInfo->export_off ? shiftDelta : 0;
     }
 
-    auto symtab = machoCtx->getLoadCommand<false, Macho::LC::symtab_command>();
+    auto symtab =
+        machoCtx->getLoadCommand<false, Macho::Loader::symtab_command>();
     if (symtab != nullptr) {
         symtab->symoff += symtab->symoff ? shiftDelta : 0;
         symtab->stroff += symtab->stroff ? shiftDelta : 0;
     }
 
     auto dysymtab =
-        machoCtx->getLoadCommand<false, Macho::LC::dysymtab_command>();
+        machoCtx->getLoadCommand<false, Macho::Loader::dysymtab_command>();
     if (dysymtab != nullptr) {
         dysymtab->tocoff += dysymtab->tocoff ? shiftDelta : 0;
         dysymtab->ntoc += dysymtab->ntoc ? shiftDelta : 0;
@@ -41,8 +44,9 @@ void updateLinkedit(Macho::Context<false> *machoCtx, int32_t shiftDelta) {
     }
 }
 
+template <class P>
 std::vector<WriteProcedure>
-Converter::optimizeOffsets(Utils::ExtractionContext extractionCtx) {
+Converter::optimizeOffsets(Utils::ExtractionContext<P> extractionCtx) {
     auto machoCtx = extractionCtx.machoCtx;
 
     std::vector<WriteProcedure> procedures;
@@ -79,3 +83,10 @@ Converter::optimizeOffsets(Utils::ExtractionContext extractionCtx) {
 
     return procedures;
 }
+
+template std::vector<WriteProcedure>
+Converter::optimizeOffsets<Utils::Pointer32>(
+    Utils::ExtractionContext<Utils::Pointer32> extractionCtx);
+template std::vector<WriteProcedure>
+Converter::optimizeOffsets<Utils::Pointer64>(
+    Utils::ExtractionContext<Utils::Pointer64> extractionCtx);

@@ -100,6 +100,7 @@ getImages(Dyld::Context *dyldCtx, std::optional<std::string> filter) {
     return images;
 }
 
+template <class P>
 void extractImage(Dyld::Context *dyldCtx, ProgramArguments args) {
     // Get the image info of the extraction target
     assert(args.extractImage != std::nullopt);
@@ -125,12 +126,12 @@ void extractImage(Dyld::Context *dyldCtx, ProgramArguments args) {
         activity.logger->set_level(spdlog::level::info);
     }
 
-    auto machoCtx = dyldCtx->createMachoCtx<false>(imageInfo);
-    Utils::ExtractionContext extractionCtx(dyldCtx, &machoCtx, &activity,
-                                           activity.logger);
+    auto machoCtx = dyldCtx->createMachoCtx<false, P>(imageInfo);
+    Utils::ExtractionContext<P> extractionCtx(dyldCtx, &machoCtx, &activity,
+                                              activity.logger);
 
     // Convert
-    auto writeProcedures = Converter::optimizeOffsets(extractionCtx);
+    auto writeProcedures = Converter::optimizeOffsets<P>(extractionCtx);
 
     // Write
     std::ofstream outFile(*args.outputPath, std::ios_base::binary);
@@ -142,6 +143,8 @@ void extractImage(Dyld::Context *dyldCtx, ProgramArguments args) {
 }
 
 int main(int argc, char *argv[]) {
+    return 0;
+
     ProgramArguments args = parseArgs(argc, argv);
 
     try {
@@ -153,7 +156,7 @@ int main(int argc, char *argv[]) {
             }
             return 0;
         } else if (args.extractImage) {
-            extractImage(&dyldCtx, args);
+            extractImage<Utils::Pointer64>(&dyldCtx, args);
         }
     } catch (const std::exception &e) {
         std::cerr << "An error has occurred: " << e.what() << std::endl;

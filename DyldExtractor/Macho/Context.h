@@ -4,6 +4,7 @@
 #include <boost/iostreams/device/mapped_file.hpp>
 #include <filesystem>
 
+#include "Loader.h"
 #include <dyld/dyld_cache_format.h>
 #include <mach-o/loader.h>
 
@@ -25,9 +26,9 @@ struct MappingInfo {
     MappingInfo(const dyld_cache_mapping_info *);
 };
 
-template <bool _ro> class SegmentContext {
-    using _SegmentCommandT = c_const<_ro, segment_command_64>::T;
-    using _SectionT = c_const<_ro, section_64>::T;
+template <bool ro, class P> class SegmentContext {
+    using _SegmentCommandT = c_const<ro, Loader::segment_command<P>>::T;
+    using _SectionT = c_const<ro, Loader::section<P>>::T;
 
   public:
     _SegmentCommandT *command;
@@ -38,10 +39,10 @@ template <bool _ro> class SegmentContext {
 
 /// A wrapper around a MachO file in the DSC.
 /// The template boolean determines if it is read only.
-template <bool _ro> class Context {
-    using _FileT = c_const<_ro, char>::T;
-    using _HeaderT = c_const<_ro, mach_header_64>::T;
-    using _LoadCommandT = c_const<_ro, load_command>::T;
+template <bool ro, class P> class Context {
+    using _FileT = c_const<ro, char>::T;
+    using _HeaderT = c_const<ro, Loader::mach_header<P>>::T;
+    using _LoadCommandT = c_const<ro, Loader::load_command>::T;
 
   public:
     // The file containing the header
@@ -49,7 +50,7 @@ template <bool _ro> class Context {
     _HeaderT *header;
 
     std::vector<_LoadCommandT *> loadCommands;
-    std::vector<typename SegmentContext<_ro>> segments;
+    std::vector<typename SegmentContext<ro, P>> segments;
 
     /// Create a wrapper around a MachO file.
     ///
@@ -95,8 +96,7 @@ template <bool _ro> class Context {
     ///
     /// @returns A vector of load command pointers or a single load command
     ///     pointer.
-    template <bool _m, class _c,
-              class _ct = c_const<_ro, typename _c::CMD_T>::T>
+    template <bool _m, class _c, class _ct = c_const<ro, _c>::T>
     std::conditional<_m, std::vector<_ct *>, _ct *>::type
     getLoadCommand() const {
         auto ncmds = []<std::size_t _s>(const uint32_t(&)[_s]) constexpr {
@@ -121,8 +121,7 @@ template <bool _ro> class Context {
     ///     template command.
     /// @returns A vector of load command pointers or a single load command
     ///     pointer.
-    template <bool _m, class _c,
-              class _ct = c_const<_ro, typename _c::CMD_T>::T, std::size_t _s>
+    template <bool _m, class _c, class _ct = c_const<ro, _c>::T, std::size_t _s>
     std::conditional<_m, std::vector<_ct *>, _ct *>::type
     getLoadCommand(const uint32_t (&cmds)[_s]) const {
         if constexpr (_m) {
