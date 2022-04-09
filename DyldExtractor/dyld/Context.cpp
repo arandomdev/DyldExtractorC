@@ -25,7 +25,8 @@ Context::Context(fs::path sharedCachePath) {
             if (!filePath.has_extension()) {
                 // cache assume file without extention is the main cache
                 cachePath = filePath;
-            } else {
+            } else if (filePath.extension() != ".map") {
+                // Filter out .map files
                 _subcaches.emplace_back(filePath);
             }
         }

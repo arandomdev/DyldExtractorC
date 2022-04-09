@@ -23,10 +23,6 @@ class Pointer64 {
 
 namespace Arch {
 
-struct x86 {
-    typedef Pointer32 P;
-};
-
 struct x86_64 {
     typedef Pointer64 P;
 };

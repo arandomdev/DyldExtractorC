@@ -100,7 +100,7 @@ getImages(Dyld::Context *dyldCtx, std::optional<std::string> filter) {
     return images;
 }
 
-template <class P>
+template <class A>
 void extractImage(Dyld::Context *dyldCtx, ProgramArguments args) {
     // Get the image info of the extraction target
     assert(args.extractImage != std::nullopt);
@@ -126,15 +126,21 @@ void extractImage(Dyld::Context *dyldCtx, ProgramArguments args) {
         activity.logger->set_level(spdlog::level::info);
     }
 
-    auto machoCtx = dyldCtx->createMachoCtx<false, P>(imageInfo);
-    Utils::ExtractionContext<P> extractionCtx(dyldCtx, &machoCtx, &activity,
-                                              activity.logger);
+    auto machoCtx = dyldCtx->createMachoCtx<false, A::P>(imageInfo);
+    Utils::ExtractionContext<A::P> extractionCtx(dyldCtx, &machoCtx, &activity,
+                                                 activity.logger);
 
     // Convert
-    auto writeProcedures = Converter::optimizeOffsets<P>(extractionCtx);
+    auto writeProcedures = Converter::optimizeOffsets<A::P>(extractionCtx);
 
     // Write
+    std::filesystem::create_directories(args.outputPath->parent_path());
     std::ofstream outFile(*args.outputPath, std::ios_base::binary);
+    if (!outFile.good()) {
+        activity.logger->error("Unable to open output file.");
+        return;
+    }
+
     for (auto procedure : writeProcedures) {
         outFile.seekp(procedure.writeOffset);
         outFile.write(procedure.source, procedure.size);
@@ -142,9 +148,9 @@ void extractImage(Dyld::Context *dyldCtx, ProgramArguments args) {
     outFile.close();
 }
 
-int main(int argc, char *argv[]) {
-    return 0;
+typedef decltype(extractImage<Utils::Arch::x86_64>) extractImageFunc;
 
+int main(int argc, char *argv[]) {
     ProgramArguments args = parseArgs(argc, argv);
 
     try {
@@ -156,7 +162,33 @@ int main(int argc, char *argv[]) {
             }
             return 0;
         } else if (args.extractImage) {
-            extractImage<Utils::Pointer64>(&dyldCtx, args);
+            // use dyld's magic to select arch
+            extractImageFunc *extractFunc = nullptr;
+            if (strcmp(dyldCtx.header->magic, "dyld_v1  x86_64") == 0)
+                extractFunc = extractImage<Utils::Arch::x86_64>;
+            else if (strcmp(dyldCtx.header->magic, "dyld_v1 x86_64h") == 0)
+                extractFunc = extractImage<Utils::Arch::x86_64>;
+            else if (strcmp(dyldCtx.header->magic, "dyld_v1   armv7") == 0)
+                extractFunc = extractImage<Utils::Arch::arm>;
+            else if (strncmp(dyldCtx.header->magic, "dyld_v1  armv7", 14) == 0)
+                extractFunc = extractImage<Utils::Arch::arm>;
+            else if (strcmp(dyldCtx.header->magic, "dyld_v1   arm64") == 0)
+                extractFunc = extractImage<Utils::Arch::arm64>;
+            else if (strcmp(dyldCtx.header->magic, "dyld_v1  arm64e") == 0)
+                extractFunc = extractImage<Utils::Arch::arm64>;
+            else if (strcmp(dyldCtx.header->magic, "dyld_v1arm64_32") == 0)
+                extractFunc = extractImage<Utils::Arch::arm64_32>;
+            else if (strcmp(dyldCtx.header->magic, "dyld_v1    i386") == 0 ||
+                     strcmp(dyldCtx.header->magic, "dyld_v1   armv5") == 0 ||
+                     strcmp(dyldCtx.header->magic, "dyld_v1   armv6") == 0) {
+                std::cerr << "Unsupported Architecture type.";
+                return 1;
+            } else {
+                std::cerr << "Unrecognized dyld shared cache magic.\n";
+                return 1;
+            }
+
+            extractFunc(&dyldCtx, args);
         }
     } catch (const std::exception &e) {
         std::cerr << "An error has occurred: " << e.what() << std::endl;
