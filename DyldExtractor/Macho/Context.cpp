@@ -11,9 +11,9 @@ template <bool ro, class P>
 SegmentContext<ro, P>::SegmentContext(_SegmentCommandT *segment)
     : command(segment) {
     auto *sectStart =
-        (typename c_const<ro, char>::T *)segment + sizeof(_SegmentCommandT);
+        (typename c_const<ro, uint8_t>::T *)segment + sizeof(_SegmentCommandT);
     for (uint32_t i = 0; i < segment->nsects; i++) {
-        auto sect = (_SectionT *)(sectStart + (i * sizeof(_SectionT)));
+        auto sect = (SectionT *)(sectStart + (i * sizeof(SectionT)));
         sections.emplace_back(sect);
     }
 }
@@ -31,9 +31,9 @@ Context<ro, P>::Context(
         subFiles) {
     // Store files
     if constexpr (ro) {
-        file = mainFile.const_data();
+        file = (_FileT *)mainFile.const_data();
     } else {
-        file = mainFile.data();
+        file = (_FileT *)mainFile.data();
     }
 
     _files.emplace_back(file, mainMappings);
@@ -41,9 +41,9 @@ Context<ro, P>::Context(
     for (auto &[fileMap, mapping] : subFiles) {
         _FileT *subFile;
         if constexpr (ro) {
-            subFile = fileMap.const_data();
+            subFile = (_FileT *)fileMap.const_data();
         } else {
-            subFile = fileMap.data();
+            subFile = (_FileT *)fileMap.data();
         }
 
         _files.emplace_back(subFile, mapping);
@@ -54,17 +54,17 @@ Context<ro, P>::Context(
     }
 
     // get data
-    header = (_HeaderT *)(file + fileOffset);
+    header = (HeaderT *)(file + fileOffset);
 
-    if (header->magic != _HeaderT::MAGIC && header->magic != _HeaderT::CIGAM) {
+    if (header->magic != HeaderT::MAGIC && header->magic != HeaderT::CIGAM) {
         throw std::invalid_argument("Mach-o header has an invalid magic.");
-    } else if (header->magic == _HeaderT::CIGAM) {
+    } else if (header->magic == HeaderT::CIGAM) {
         throw std::invalid_argument(
             "Host system endianness incompatible with mach-o file.");
     }
 
     loadCommands.reserve(header->ncmds);
-    _FileT *cmdStart = (_FileT *)header + sizeof(_HeaderT);
+    _FileT *cmdStart = (_FileT *)header + sizeof(HeaderT);
     for (uint32_t cmdOff = 0; cmdOff < header->sizeofcmds;) {
         auto cmd = (_LoadCommandT *)(cmdStart + cmdOff);
         loadCommands.emplace_back(cmd);
@@ -124,19 +124,66 @@ Context<ro, P> &Context<ro, P>::operator=(Context<ro, P> &&other) {
 }
 
 template <bool ro, class P>
-std::tuple<uint64_t, typename Context<ro, P>::_FileT *>
+std::pair<uint64_t, typename Context<ro, P>::_FileT *>
 Context<ro, P>::convertAddr(uint64_t addr) const {
     for (auto &[file, mappings] : _files) {
         for (auto &mapping : mappings) {
             if (addr >= mapping.address &&
                 addr < mapping.address + mapping.size) {
-                return std::make_tuple(
+                return std::make_pair(
                     (addr - mapping.address) + mapping.fileOffset, file);
             }
         }
     }
 
-    return std::make_tuple(0, nullptr);
+    return std::make_pair(0, nullptr);
+}
+
+template <bool ro, class P>
+std::optional<SegmentContext<ro, P>>
+Context<ro, P>::getSegment(const char *segName) const {
+    auto nameSize = strlen(segName) + 1;
+    if (nameSize > 16) {
+        throw std::invalid_argument("Segment name is too long.");
+    }
+
+    for (auto &seg : segments) {
+        if (memcmp(segName, seg.command->segname, nameSize) == 0) {
+            return seg;
+        }
+    }
+
+    return std::nullopt;
+}
+
+template <bool ro, class P>
+SegmentContext<ro, P>::SectionT *
+Context<ro, P>::getSection(const char *segName, const char *sectName) const {
+    std::size_t segSize = 0;
+    if (segName != nullptr) {
+        segSize = strlen(segName) + 1;
+        if (segSize > 16) {
+            throw std::invalid_argument("Segment name is too long.");
+        }
+    }
+
+    std::size_t sectSize = strlen(sectName) + 1;
+    if (sectSize > 16) {
+        throw std::invalid_argument("Section name is too long.");
+    }
+
+    for (auto &seg : segments) {
+        if (segSize == 0 ||
+            memcmp(segName, seg.command->segname, segSize) == 0) {
+            for (auto sect : seg.sections) {
+                if (memcmp(sectName, sect->sectname, sectSize) == 0) {
+                    return sect;
+                }
+            }
+        }
+    }
+
+    return nullptr;
 }
 
 template <bool ro, class P>

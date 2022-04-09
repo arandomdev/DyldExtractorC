@@ -5,11 +5,13 @@
 #include <argparse/argparse.hpp>
 #include <dyld/dyld_cache_format.h>
 
+#include <Converter/LinkeditOptimizer.h>
 #include <Converter/OffsetOptimizer.h>
 #include <Dyld/Context.h>
 #include <Logger/ActivityLogger.h>
 #include <Macho/Context.h>
 #include <Utils/ExtractionContext.h>
+#include <Utils/HeaderTracker.h>
 
 namespace fs = std::filesystem;
 
@@ -61,7 +63,7 @@ ProgramArguments parseArgs(int argc, char *argv[]) {
         args.extractImage = program.present<std::string>("--extract");
         args.outputPath = program.present<std::string>("--output");
     } catch (const std::runtime_error &err) {
-        std::cerr << err.what() << std::endl;
+        std::cerr << "Argument parsing error: " << err.what() << std::endl;
         std::exit(1);
     }
 
@@ -80,8 +82,8 @@ getImages(Dyld::Context *dyldCtx, std::optional<std::string> filter) {
     images.reserve(dyldCtx->images.size());
 
     for (int i = 0; i < dyldCtx->images.size(); i++) {
-        auto imagePath =
-            std::string(dyldCtx->file + dyldCtx->images[i]->pathFileOffset);
+        auto imagePath = std::string((const char *)dyldCtx->file +
+                                     dyldCtx->images[i]->pathFileOffset);
 
         if (filter) {
             auto it =
@@ -127,10 +129,12 @@ void extractImage(Dyld::Context *dyldCtx, ProgramArguments args) {
     }
 
     auto machoCtx = dyldCtx->createMachoCtx<false, A::P>(imageInfo);
-    Utils::ExtractionContext<A::P> extractionCtx(dyldCtx, &machoCtx, &activity,
-                                                 activity.logger);
+    Utils::HeaderTracker<A::P> headerTracker(&machoCtx);
+    Utils::ExtractionContext<A::P> extractionCtx(
+        dyldCtx, &machoCtx, &activity, activity.logger, &headerTracker);
 
     // Convert
+    Converter::optimizeLinkedit(extractionCtx);
     auto writeProcedures = Converter::optimizeOffsets<A::P>(extractionCtx);
 
     // Write
@@ -143,9 +147,11 @@ void extractImage(Dyld::Context *dyldCtx, ProgramArguments args) {
 
     for (auto procedure : writeProcedures) {
         outFile.seekp(procedure.writeOffset);
-        outFile.write(procedure.source, procedure.size);
+        outFile.write((const char *)procedure.source, procedure.size);
     }
     outFile.close();
+
+    activity.stopActivity();
 }
 
 typedef decltype(extractImage<Utils::Arch::x86_64>) extractImageFunc;

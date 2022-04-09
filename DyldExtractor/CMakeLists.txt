@@ -1,10 +1,12 @@
 cmake_minimum_required (VERSION 3.8)
 
 add_library (DyldExtractor
+	Converter/LinkeditOptimizer.cpp
 	Converter/OffsetOptimizer.cpp
+	Logger/ActivityLogger.cpp
 	Dyld/Context.cpp
 	Macho/Context.cpp
-	Logger/ActivityLogger.cpp
+	Utils/HeaderTracker.cpp
 )
 
 target_link_libraries (DyldExtractor PUBLIC ${Boost_LIBRARIES})

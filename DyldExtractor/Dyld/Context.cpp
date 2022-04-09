@@ -39,7 +39,7 @@ Context::Context(fs::path sharedCachePath) {
 
     _cacheFile.open(_cachePath.string(), bio::mapped_file::mapmode::readonly);
     _cacheOpen = true;
-    file = _cacheFile.const_data();
+    file = (uint8_t *)_cacheFile.const_data();
 
     // validate cache
     if (_cacheFile.size() < sizeof(dyld_cache_header)) {
@@ -107,24 +107,23 @@ Context &Context::operator=(Context &&other) {
     return *this;
 }
 
-std::tuple<uint64_t, const Context *>
-Context::convertAddr(uint64_t addr) const {
+std::pair<uint64_t, const Context *> Context::convertAddr(uint64_t addr) const {
     for (auto const &mapping : _mappings) {
         if (addr >= mapping->address &&
             addr < mapping->address + mapping->size) {
-            return std::make_tuple(
+            return std::make_pair(
                 (addr - mapping->address) + mapping->fileOffset, this);
         }
     }
 
     for (auto const &subcache : _subcaches) {
         auto convert = subcache.convertAddr(addr);
-        if (std::get<1>(convert) != nullptr) {
+        if (convert.second != nullptr) {
             return convert;
         }
     }
 
-    return std::make_tuple(0, nullptr);
+    return std::make_pair(0, nullptr);
 }
 
 bool Context::headerContainsMember(std::size_t memberOffset) const {
@@ -204,3 +203,17 @@ Context::createMachoCtx<false, Utils::Pointer32>(
 template Macho::Context<false, Utils::Pointer64>
 Context::createMachoCtx<false, Utils::Pointer64>(
     const dyld_cache_image_info *imageInfo) const;
+
+const Context *Context::getSymbolsCache() const {
+    if (!_subcaches.size()) {
+        return this;
+    }
+
+    for (auto &cache : _subcaches) {
+        if (memcmp(header->symbolFileUUID, cache.header->uuid, 16) == 0) {
+            return &cache;
+        }
+    }
+
+    return nullptr;
+}

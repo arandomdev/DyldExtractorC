@@ -21,6 +21,14 @@ class Pointer64 {
     static void setP(uint_t &into, uint64_t value) { into = (uint_t)value; }
 };
 
+/// Align n to a stride k
+///
+/// @param n The number to align.
+/// @param k The stride to align to.
+template <class T1, class T2> inline void align(T1 &n, T2 k) {
+    n = (n + k - 1) / k * k;
+}
+
 namespace Arch {
 
 struct x86_64 {

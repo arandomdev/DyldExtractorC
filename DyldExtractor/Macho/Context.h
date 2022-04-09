@@ -28,11 +28,12 @@ struct MappingInfo {
 
 template <bool ro, class P> class SegmentContext {
     using _SegmentCommandT = c_const<ro, Loader::segment_command<P>>::T;
-    using _SectionT = c_const<ro, Loader::section<P>>::T;
 
   public:
+    using SectionT = c_const<ro, Loader::section<P>>::T;
+
     _SegmentCommandT *command;
-    std::vector<_SectionT *> sections;
+    std::vector<SectionT *> sections;
 
     SegmentContext(_SegmentCommandT *segment);
 };
@@ -40,19 +41,20 @@ template <bool ro, class P> class SegmentContext {
 /// A wrapper around a MachO file in the DSC.
 /// The template boolean determines if it is read only.
 template <bool ro, class P> class Context {
-    using _FileT = c_const<ro, char>::T;
-    using _HeaderT = c_const<ro, Loader::mach_header<P>>::T;
+    using _FileT = c_const<ro, uint8_t>::T;
     using _LoadCommandT = c_const<ro, Loader::load_command>::T;
 
   public:
+    using HeaderT = c_const<ro, Loader::mach_header<P>>::T;
+
     // The file containing the header
     _FileT *file;
-    _HeaderT *header;
+    HeaderT *header;
 
     std::vector<_LoadCommandT *> loadCommands;
     std::vector<typename SegmentContext<ro, P>> segments;
 
-    /// Create a wrapper around a MachO file.
+    /// A wrapper around a MachO file.
     ///
     /// The access permissions is based on the main file provided. Calling this
     /// directly also implies that the context does not manage the file maps.
@@ -66,7 +68,7 @@ template <bool ro, class P> class Context {
             std::vector<MappingInfo> mainMappings,
             std::vector<std::tuple<bio::mapped_file, std::vector<MappingInfo>>>
                 subFiles);
-    /// Create a writable wrapper around a MachO file.
+    /// A writable wrapper around a MachO file.
     ///
     /// The files will be opened with private (copy on write) access.
     ///
@@ -85,15 +87,15 @@ template <bool ro, class P> class Context {
     /// nullptr will be returned.
     ///
     /// @param addr The virtual address to convert.
-    /// @returns A tuple of the file offset and its file.
-    std::tuple<uint64_t, _FileT *> convertAddr(uint64_t addr) const;
+    /// @returns A pair of the file offset and its file.
+    std::pair<uint64_t, _FileT *> convertAddr(uint64_t addr) const;
 
     /// Get load commands
     ///
-    /// Use the template to set if multiple load commands should be returned and
-    /// the type of the load command. If multiple is false, the first match is
-    /// returned.
+    /// If multiple is false, the first match is returned.
     ///
+    /// @tparam _m Whether to return multiple.
+    /// @tparam _c Type of load command.
     /// @returns A vector of load command pointers or a single load command
     ///     pointer.
     template <bool _m, class _c, class _ct = c_const<ro, _c>::T>
@@ -113,10 +115,10 @@ template <bool ro, class P> class Context {
 
     /// Get load commands
     ///
-    /// Use the template to set if multiple load commands should be returned and
-    /// the type of the load command. If multiple is false, the first match is
-    /// returned.
+    /// If multiple is false, the first match is returned.
     ///
+    /// @tparam _m Whether to return multiple.
+    /// @tparam _c Type of load command.
     /// @param cmds Overdrive the default set of command IDs associated with the
     ///     template command.
     /// @returns A vector of load command pointers or a single load command
@@ -131,6 +133,20 @@ template <bool ro, class P> class Context {
             return (_ct *)_getLoadCommand(cmds, _s);
         }
     }
+
+    /// Search for a segment
+    ///
+    /// @param segName The name of the segment.
+    /// @returns The segment context. nullopt if not found.
+    std::optional<SegmentContext<ro, P>> getSegment(const char *segName) const;
+
+    /// Search for a section
+    ///
+    /// @param segName The name of the segment, or nullptr.
+    /// @param sectName The name of the section.
+    /// @returns The section structure, or nullptr.
+    SegmentContext<ro, P>::SectionT *getSection(const char *segName,
+                                                const char *sectName) const;
 
     ~Context();
     Context(const Context &other) = delete;

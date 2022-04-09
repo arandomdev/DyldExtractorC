@@ -73,6 +73,11 @@ void ActivityLogger::update(std::optional<std::string> moduleName,
     }
 }
 
+void ActivityLogger::stopActivity() {
+    _enableActivity = false;
+    _activityStream << "\n";
+}
+
 void ActivityLogger::_updateActivity(bool fullRefesh) {
     // Format, [(/) Elapsed Time] Module - Text
     std::string output;
@@ -81,7 +86,7 @@ void ActivityLogger::_updateActivity(bool fullRefesh) {
 
     if (fullRefesh) {
         // just update the text
-        output = fmt::format("\033[2k[({}) {}] {} - {}\r",
+        output = fmt::format("\033[2K[({}) {}] {} - {}\r",
                              _activityStates[_currentActivityState],
                              _formatTime(elapsedTime), _currentModule,
                              _currentMessage);

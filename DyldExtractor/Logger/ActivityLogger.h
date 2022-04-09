@@ -44,12 +44,15 @@ class ActivityLogger {
     void update(std::optional<std::string> moduleName = std::nullopt,
                 std::optional<std::string> message = std::nullopt);
 
+    /// Stop the activity indicator
+    void stopActivity();
+
   private:
     std::ostream &_activityStream;
     std::ostream _loggerStream;
     _LoggerStreamBuffer _streamBuffer;
 
-    const bool _enableActivity;
+    bool _enableActivity;
     std::string _currentModule = "---";
     std::string _currentMessage = "---";
     int _currentActivityState = 0;

@@ -8,7 +8,7 @@ namespace Converter {
 
 struct WriteProcedure {
     uint64_t writeOffset;
-    const char *source;
+    const uint8_t *source;
     uint64_t size;
 };
 

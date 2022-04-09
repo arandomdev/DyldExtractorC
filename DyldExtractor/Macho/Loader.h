@@ -2,6 +2,7 @@
 #define __MACHO_LOADER__
 
 #include <mach-o/loader.h>
+#include <mach-o/nlist.h>
 
 #include <Utils/Architectures.h>
 
@@ -53,6 +54,10 @@ struct linkedit_data_command : public ::linkedit_data_command {
 struct dyld_info_command : public ::dyld_info_command {
     constexpr static uint32_t CMDS[] = {LC_DYLD_INFO, LC_DYLD_INFO_ONLY};
 };
+
+template <class P> struct nlist {};
+template <> struct nlist<Utils::Pointer32> : public ::nlist {};
+template <> struct nlist<Utils::Pointer64> : public ::nlist_64 {};
 
 }; // namespace Loader
 }; // namespace Macho

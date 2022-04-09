@@ -14,7 +14,7 @@ namespace fs = std::filesystem;
 
 class Context {
   public:
-    const char *file;
+    const uint8_t *file;
     const dyld_cache_header *header;
     std::vector<const dyld_cache_image_info *> images;
 
@@ -30,8 +30,8 @@ class Context {
     /// nullptr will be returned.
     ///
     /// @param addr The virtual address to convert.
-    /// @returns A tuple of the file offset and its Context.
-    std::tuple<uint64_t, const Context *> convertAddr(uint64_t addr) const;
+    /// @returns A pair of the file offset and its Context.
+    std::pair<uint64_t, const Context *> convertAddr(uint64_t addr) const;
 
     /// Determine if a member is contained in the header
     ///
@@ -48,6 +48,9 @@ class Context {
     template <bool ro, class P>
     Macho::Context<ro, P>
     createMachoCtx(const dyld_cache_image_info *imageInfo) const;
+
+    /// Get the cache file for local symbols
+    const Context *getSymbolsCache() const;
 
   private:
     bio::mapped_file _cacheFile;

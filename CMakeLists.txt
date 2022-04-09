@@ -2,7 +2,6 @@
 # and include sub-projects here.
 #
 cmake_minimum_required (VERSION 3.8)
-message("CMAKE_PROJECT_VERSION = ${CMAKE_VERSION}")
 
 project ("DyldExtractorC")
 
