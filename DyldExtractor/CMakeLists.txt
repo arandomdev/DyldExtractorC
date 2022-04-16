@@ -3,6 +3,7 @@ cmake_minimum_required (VERSION 3.8)
 add_library (DyldExtractor
 	Converter/LinkeditOptimizer.cpp
 	Converter/OffsetOptimizer.cpp
+	Converter/Slide.cpp
 	Logger/ActivityLogger.cpp
 	Dyld/Context.cpp
 	Macho/Context.cpp

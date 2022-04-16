@@ -6,8 +6,7 @@
 
 namespace Converter {
 
-template <class P>
-void optimizeLinkedit(Utils::ExtractionContext<P> extractionCtx);
+template <class P> void optimizeLinkedit(Utils::ExtractionContext<P> eCtx);
 
 } // namespace Converter
 

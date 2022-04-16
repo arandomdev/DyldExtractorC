@@ -27,16 +27,16 @@ ActivityLogger::ActivityLogger(std::string name, std::ostream &output,
       _lastActivityUpdate(std::chrono::high_resolution_clock::now()),
       _lastElapsedTime(0),
       _startTime(std::chrono::high_resolution_clock::now()) {
-    std::shared_ptr<spdlog::sinks::ostream_sink_mt> streamSink;
+    std::shared_ptr<spdlog::sinks::ostream_sink_st> streamSink;
     if (enableActivity) {
         // Create a logger with the special buffer
         streamSink =
-            std::make_shared<spdlog::sinks::ostream_sink_mt>(_loggerStream);
+            std::make_shared<spdlog::sinks::ostream_sink_st>(_loggerStream);
 
         // preload activity
         _updateActivity(true);
     } else {
-        streamSink = std::make_shared<spdlog::sinks::ostream_sink_mt>(output);
+        streamSink = std::make_shared<spdlog::sinks::ostream_sink_st>(output);
     }
 
     logger = std::make_shared<spdlog::logger>(name, streamSink);

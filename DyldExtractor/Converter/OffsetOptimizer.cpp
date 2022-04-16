@@ -7,15 +7,14 @@ using namespace Converter;
 
 // Update all linkedit data commands
 template <class P>
-void updateLinkedit(Macho::Context<false, P> *machoCtx, int32_t shiftDelta) {
+void updateLinkedit(Macho::Context<false, P> &mCtx, int32_t shiftDelta) {
     for (auto linkeditData :
-         machoCtx
-             ->getLoadCommand<true, Macho::Loader::linkedit_data_command>()) {
+         mCtx.getLoadCommand<true, Macho::Loader::linkedit_data_command>()) {
         linkeditData->dataoff += linkeditData->dataoff ? shiftDelta : 0;
     }
 
     auto dyldInfo =
-        machoCtx->getLoadCommand<false, Macho::Loader::dyld_info_command>();
+        mCtx.getLoadCommand<false, Macho::Loader::dyld_info_command>();
     if (dyldInfo != nullptr) {
         dyldInfo->rebase_off += dyldInfo->rebase_off ? shiftDelta : 0;
         dyldInfo->bind_off += dyldInfo->bind_off ? shiftDelta : 0;
@@ -24,15 +23,14 @@ void updateLinkedit(Macho::Context<false, P> *machoCtx, int32_t shiftDelta) {
         dyldInfo->export_off += dyldInfo->export_off ? shiftDelta : 0;
     }
 
-    auto symtab =
-        machoCtx->getLoadCommand<false, Macho::Loader::symtab_command>();
+    auto symtab = mCtx.getLoadCommand<false, Macho::Loader::symtab_command>();
     if (symtab != nullptr) {
         symtab->symoff += symtab->symoff ? shiftDelta : 0;
         symtab->stroff += symtab->stroff ? shiftDelta : 0;
     }
 
     auto dysymtab =
-        machoCtx->getLoadCommand<false, Macho::Loader::dysymtab_command>();
+        mCtx.getLoadCommand<false, Macho::Loader::dysymtab_command>();
     if (dysymtab != nullptr) {
         dysymtab->tocoff += dysymtab->tocoff ? shiftDelta : 0;
         dysymtab->ntoc += dysymtab->ntoc ? shiftDelta : 0;
@@ -46,13 +44,13 @@ void updateLinkedit(Macho::Context<false, P> *machoCtx, int32_t shiftDelta) {
 
 template <class P>
 std::vector<WriteProcedure>
-Converter::optimizeOffsets(Utils::ExtractionContext<P> extractionCtx) {
-    extractionCtx.activity->update("Offset Optimizer", "Updating Offsets");
-    auto machoCtx = extractionCtx.machoCtx;
+Converter::optimizeOffsets(Utils::ExtractionContext<P> eCtx) {
+    eCtx.activity.update("Offset Optimizer", "Updating Offsets");
+    auto &mCtx = eCtx.mCtx;
 
     std::vector<WriteProcedure> procedures;
     uint32_t dataHead = 0;
-    for (auto &segment : machoCtx->segments) {
+    for (auto &segment : mCtx.segments) {
         // verify sizes
         if (segment.command->fileoff > UINT32_MAX ||
             segment.command->filesize > UINT32_MAX) {
@@ -62,7 +60,7 @@ Converter::optimizeOffsets(Utils::ExtractionContext<P> extractionCtx) {
         }
 
         // create procedure
-        auto [segOff, segCtx] = machoCtx->convertAddr(segment.command->vmaddr);
+        auto [segOff, segCtx] = mCtx.convertAddr(segment.command->vmaddr);
         procedures.emplace_back(dataHead, segCtx + segOff,
                                 segment.command->filesize);
 
@@ -74,7 +72,7 @@ Converter::optimizeOffsets(Utils::ExtractionContext<P> extractionCtx) {
         }
 
         if (memcmp(&segment.command->segname, "__LINKEDIT\x00", 11) == 0) {
-            updateLinkedit(machoCtx, shiftDelta);
+            updateLinkedit(mCtx, shiftDelta);
         }
 
         // update and page align dataHead
@@ -87,7 +85,7 @@ Converter::optimizeOffsets(Utils::ExtractionContext<P> extractionCtx) {
 
 template std::vector<WriteProcedure>
 Converter::optimizeOffsets<Utils::Pointer32>(
-    Utils::ExtractionContext<Utils::Pointer32> extractionCtx);
+    Utils::ExtractionContext<Utils::Pointer32> eCtx);
 template std::vector<WriteProcedure>
 Converter::optimizeOffsets<Utils::Pointer64>(
-    Utils::ExtractionContext<Utils::Pointer64> extractionCtx);
+    Utils::ExtractionContext<Utils::Pointer64> eCtx);

@@ -11,11 +11,11 @@
 namespace Utils {
 
 template <class P> struct ExtractionContext {
-    Dyld::Context *dyldCtx;
-    Macho::Context<false, P> *machoCtx;
-    ActivityLogger *activity;
+    Dyld::Context &dCtx;
+    Macho::Context<false, P> &mCtx;
+    ActivityLogger &activity;
     std::shared_ptr<spdlog::logger> logger;
-    HeaderTracker<P> *headerTracker;
+    HeaderTracker<P> &headerTracker;
 
     ///
     /// If this variable is true, the following is true,

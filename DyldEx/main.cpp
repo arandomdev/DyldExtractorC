@@ -77,13 +77,13 @@ ProgramArguments parseArgs(int argc, char *argv[]) {
 
 /// Retrieve images in the cache, with an optional filter.
 std::vector<std::tuple<int, std::string>>
-getImages(Dyld::Context *dyldCtx, std::optional<std::string> filter) {
+getImages(Dyld::Context &dCtx, std::optional<std::string> filter) {
     std::vector<std::tuple<int, std::string>> images;
-    images.reserve(dyldCtx->images.size());
+    images.reserve(dCtx.images.size());
 
-    for (int i = 0; i < dyldCtx->images.size(); i++) {
-        auto imagePath = std::string((const char *)dyldCtx->file +
-                                     dyldCtx->images[i]->pathFileOffset);
+    for (int i = 0; i < dCtx.images.size(); i++) {
+        auto imagePath = std::string((const char *)dCtx.file +
+                                     dCtx.images[i]->pathFileOffset);
 
         if (filter) {
             auto it =
@@ -103,12 +103,12 @@ getImages(Dyld::Context *dyldCtx, std::optional<std::string> filter) {
 }
 
 template <class A>
-void extractImage(Dyld::Context *dyldCtx, ProgramArguments args) {
+void extractImage(Dyld::Context &dCtx, ProgramArguments args) {
     // Get the image info of the extraction target
     assert(args.extractImage != std::nullopt);
 
     auto extractionTargetFilter = *args.extractImage;
-    auto possibleTargets = getImages(dyldCtx, args.extractImage);
+    auto possibleTargets = getImages(dCtx, args.extractImage);
     if (possibleTargets.size() == 0) {
         std::cerr << "Unable to find image '" + extractionTargetFilter + "'"
                   << std::endl;
@@ -116,7 +116,7 @@ void extractImage(Dyld::Context *dyldCtx, ProgramArguments args) {
     }
 
     auto &[imageIndex, imagePath] = possibleTargets[0];
-    auto imageInfo = dyldCtx->images[imageIndex];
+    auto imageInfo = dCtx.images[imageIndex];
     std::cout << "Extracting '" + imagePath + "'" << std::endl;
 
     // Setup context
@@ -127,15 +127,16 @@ void extractImage(Dyld::Context *dyldCtx, ProgramArguments args) {
     } else {
         activity.logger->set_level(spdlog::level::info);
     }
+    activity.update("DyldEx", "Starting up");
 
-    auto machoCtx = dyldCtx->createMachoCtx<false, A::P>(imageInfo);
-    Utils::HeaderTracker<A::P> headerTracker(&machoCtx);
-    Utils::ExtractionContext<A::P> extractionCtx(
-        dyldCtx, &machoCtx, &activity, activity.logger, &headerTracker);
+    auto mCtx = dCtx.createMachoCtx<false, A::P>(imageInfo);
+    Utils::HeaderTracker<A::P> headerTracker(&mCtx);
+    Utils::ExtractionContext<A::P> eCtx(dCtx, mCtx, activity, activity.logger,
+                                        headerTracker);
 
     // Convert
-    Converter::optimizeLinkedit(extractionCtx);
-    auto writeProcedures = Converter::optimizeOffsets<A::P>(extractionCtx);
+    Converter::optimizeLinkedit(eCtx);
+    auto writeProcedures = Converter::optimizeOffsets<A::P>(eCtx);
 
     // Write
     std::filesystem::create_directories(args.outputPath->parent_path());
@@ -151,6 +152,7 @@ void extractImage(Dyld::Context *dyldCtx, ProgramArguments args) {
     }
     outFile.close();
 
+    activity.update("DyldEx", "Done");
     activity.stopActivity();
 }
 
@@ -160,33 +162,33 @@ int main(int argc, char *argv[]) {
     ProgramArguments args = parseArgs(argc, argv);
 
     try {
-        Dyld::Context dyldCtx(args.cache_path);
+        Dyld::Context dCtx(args.cache_path);
 
         if (args.listImages) {
-            for (auto &[i, path] : getImages(&dyldCtx, args.listFilter)) {
+            for (auto &[i, path] : getImages(dCtx, args.listFilter)) {
                 std::cout << path << std::endl;
             }
             return 0;
         } else if (args.extractImage) {
             // use dyld's magic to select arch
             extractImageFunc *extractFunc = nullptr;
-            if (strcmp(dyldCtx.header->magic, "dyld_v1  x86_64") == 0)
+            if (strcmp(dCtx.header->magic, "dyld_v1  x86_64") == 0)
                 extractFunc = extractImage<Utils::Arch::x86_64>;
-            else if (strcmp(dyldCtx.header->magic, "dyld_v1 x86_64h") == 0)
+            else if (strcmp(dCtx.header->magic, "dyld_v1 x86_64h") == 0)
                 extractFunc = extractImage<Utils::Arch::x86_64>;
-            else if (strcmp(dyldCtx.header->magic, "dyld_v1   armv7") == 0)
+            else if (strcmp(dCtx.header->magic, "dyld_v1   armv7") == 0)
                 extractFunc = extractImage<Utils::Arch::arm>;
-            else if (strncmp(dyldCtx.header->magic, "dyld_v1  armv7", 14) == 0)
+            else if (strncmp(dCtx.header->magic, "dyld_v1  armv7", 14) == 0)
                 extractFunc = extractImage<Utils::Arch::arm>;
-            else if (strcmp(dyldCtx.header->magic, "dyld_v1   arm64") == 0)
+            else if (strcmp(dCtx.header->magic, "dyld_v1   arm64") == 0)
                 extractFunc = extractImage<Utils::Arch::arm64>;
-            else if (strcmp(dyldCtx.header->magic, "dyld_v1  arm64e") == 0)
+            else if (strcmp(dCtx.header->magic, "dyld_v1  arm64e") == 0)
                 extractFunc = extractImage<Utils::Arch::arm64>;
-            else if (strcmp(dyldCtx.header->magic, "dyld_v1arm64_32") == 0)
+            else if (strcmp(dCtx.header->magic, "dyld_v1arm64_32") == 0)
                 extractFunc = extractImage<Utils::Arch::arm64_32>;
-            else if (strcmp(dyldCtx.header->magic, "dyld_v1    i386") == 0 ||
-                     strcmp(dyldCtx.header->magic, "dyld_v1   armv5") == 0 ||
-                     strcmp(dyldCtx.header->magic, "dyld_v1   armv6") == 0) {
+            else if (strcmp(dCtx.header->magic, "dyld_v1    i386") == 0 ||
+                     strcmp(dCtx.header->magic, "dyld_v1   armv5") == 0 ||
+                     strcmp(dCtx.header->magic, "dyld_v1   armv6") == 0) {
                 std::cerr << "Unsupported Architecture type.";
                 return 1;
             } else {
@@ -194,7 +196,7 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
 
-            extractFunc(&dyldCtx, args);
+            extractFunc(dCtx, args);
         }
     } catch (const std::exception &e) {
         std::cerr << "An error has occurred: " << e.what() << std::endl;
