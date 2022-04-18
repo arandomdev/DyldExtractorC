@@ -1,5 +1,6 @@
 #include "LinkeditOptimizer.h"
 
+#include <format>
 #include <map>
 #include <string_view>
 
@@ -117,25 +118,22 @@ template <class P> class LinkeditOptimizer {
 
 template <class P>
 LinkeditOptimizer<P>::LinkeditOptimizer(Utils::ExtractionContext<P> eCtx)
-    : _eCtx(eCtx), _dCtx(eCtx.dyldCtx), _mCtx(eCtx.machoCtx),
-      _activity(eCtx.activity), _logger(eCtx.logger),
-      _headerTracker(eCtx.headerTracker) {
-    auto &machoCtx = eCtx.machoCtx;
+    : _eCtx(eCtx), _dCtx(eCtx.dCtx), _mCtx(eCtx.mCtx), _activity(eCtx.activity),
+      _logger(eCtx.logger), _headerTracker(eCtx.headerTracker) {
+    auto &mCtx = eCtx.mCtx;
 
-    auto [offset, file] = machoCtx.convertAddr(
-        machoCtx.getSegment("__LINKEDIT")->command->vmaddr);
+    auto [offset, file] =
+        mCtx.convertAddr(mCtx.getSegment("__LINKEDIT")->command->vmaddr);
     _linkeditFile = file;
     _linkeditOffset = (uint32_t)offset;
     _linkeditStart = file + offset;
 
-    _dyldInfo =
-        machoCtx.getLoadCommand<false, Macho::Loader::dyld_info_command>();
-    _symTab = machoCtx.getLoadCommand<false, Macho::Loader::symtab_command>();
-    _dySymTab =
-        machoCtx.getLoadCommand<false, Macho::Loader::dysymtab_command>();
+    _dyldInfo = mCtx.getLoadCommand<false, Macho::Loader::dyld_info_command>();
+    _symTab = mCtx.getLoadCommand<false, Macho::Loader::symtab_command>();
+    _dySymTab = mCtx.getLoadCommand<false, Macho::Loader::dysymtab_command>();
     constexpr static uint32_t exportTrieCmds[] = {LC_DYLD_EXPORTS_TRIE};
     _exportTrieCmd =
-        machoCtx.getLoadCommand<false, Macho::Loader::linkedit_data_command>(
+        mCtx.getLoadCommand<false, Macho::Loader::linkedit_data_command>(
             exportTrieCmds);
 }
 
@@ -647,12 +645,89 @@ uint32_t LinkeditOptimizer<P>::_copyRedactedLocalSymbols(uint8_t *newLinkedit,
     return newLocalSymbolsCount;
 }
 
+/// Check all load commands for unknown load commands
+template <class P> void checkLoadCommands(Utils::ExtractionContext<P> eCtx) {
+    for (auto lc : eCtx.mCtx.loadCommands) {
+        switch (lc->cmd) {
+        case LC_SEGMENT:    // segment_command
+        case LC_SEGMENT_64: // segment_command_64
+        case LC_IDFVMLIB:   // fvmlib_command
+        case LC_LOADFVMLIB:
+        case LC_ID_DYLIB: // dylib_command
+        case LC_LOAD_DYLIB:
+        case LC_LOAD_WEAK_DYLIB:
+        case LC_REEXPORT_DYLIB:
+        case LC_LOAD_UPWARD_DYLIB:
+        case LC_LAZY_LOAD_DYLIB:
+        case LC_SUB_FRAMEWORK:  // sub_framework_command
+        case LC_SUB_CLIENT:     // sub_client_command
+        case LC_SUB_UMBRELLA:   // sub_umbrella_command
+        case LC_SUB_LIBRARY:    // sub_library_command
+        case LC_PREBOUND_DYLIB: // prebound_dylib_command
+        case LC_ID_DYLINKER:    // dylinker_command
+        case LC_LOAD_DYLINKER:
+        case LC_DYLD_ENVIRONMENT:
+        case LC_THREAD: // thread_command
+        case LC_UNIXTHREAD:
+        case LC_ROUTINES:           // routines_command
+        case LC_ROUTINES_64:        // routines_command_64
+        case LC_PREBIND_CKSUM:      // prebind_cksum_command
+        case LC_UUID:               // uuid_command
+        case LC_RPATH:              // rpath_command
+        case LC_FILESET_ENTRY:      // fileset_entry_command
+        case LC_ENCRYPTION_INFO:    // encryption_info_command
+        case LC_ENCRYPTION_INFO_64: // encryption_info_command_64
+        case LC_VERSION_MIN_MACOSX: // version_min_command
+        case LC_VERSION_MIN_IPHONEOS:
+        case LC_VERSION_MIN_WATCHOS:
+        case LC_VERSION_MIN_TVOS:
+        case LC_BUILD_VERSION:  // build_version_command
+        case LC_LINKER_OPTION:  // linker_option_command
+        case LC_IDENT:          // ident_command
+        case LC_FVMFILE:        // fvmfile_command
+        case LC_MAIN:           // entry_point_command
+        case LC_SOURCE_VERSION: // source_version_command
+            /* Don't contain any data in the linkedit */
+            break;
+
+        case LC_SYMTAB:            // symtab_command
+        case LC_DYSYMTAB:          // dysymtab_command
+        case LC_DYLD_EXPORTS_TRIE: // linkedit_data_command
+        case LC_FUNCTION_STARTS:
+        case LC_DATA_IN_CODE:
+        case LC_DYLD_INFO: // dyld_info_command
+        case LC_DYLD_INFO_ONLY:
+            // Contains linkedit data, is properly handled.
+            break;
+
+        case LC_TWOLEVEL_HINTS: // twolevel_hints_command
+        case LC_CODE_SIGNATURE: // linkedit_data_command
+        case LC_SEGMENT_SPLIT_INFO:
+        case LC_DYLIB_CODE_SIGN_DRS:
+        case LC_LINKER_OPTIMIZATION_HINT:
+        case LC_DYLD_CHAINED_FIXUPS:
+        case LC_SYMSEG: // symseg_command, deprecated
+        case LC_NOTE:   // note_command
+            // May contain linkedit data, not handled.
+            eCtx.logger->warn(std::format(
+                "Unhandled load command: {:#x}, may contain linkedit data.",
+                lc->cmd));
+            break;
+        default:
+            eCtx.logger->warn(std::format(
+                "Unknown load command: {:#x}, may contain linkedit data.",
+                lc->cmd));
+            break;
+        }
+    }
+}
+
 template <class P>
 void Converter::optimizeLinkedit(Utils::ExtractionContext<P> eCtx) {
     eCtx.activity.update("Linkedit Optimizer", "Optimizing Linkedit");
+    checkLoadCommands(eCtx);
 
-    // TODO: Verify load commands
-    auto linkeditSeg = eCtx.machoCtx.getSegment("__LINKEDIT");
+    auto linkeditSeg = eCtx.mCtx.getSegment("__LINKEDIT");
     if (!linkeditSeg) {
         throw std::invalid_argument(
             "Mach-o file doesn't have __LINKEDIT segment.");
@@ -680,7 +755,7 @@ void Converter::optimizeLinkedit(Utils::ExtractionContext<P> eCtx) {
 
     // Copy new linkedit
     auto [linkeditOff, linkeditFile] =
-        eCtx.machoCtx.convertAddr(linkeditSeg->command->vmaddr);
+        eCtx.mCtx.convertAddr(linkeditSeg->command->vmaddr);
     memcpy(linkeditFile + linkeditOff, newLinkedit, offset);
     optimizer.updateLoadCommands(offset);
 
