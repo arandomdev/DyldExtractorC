@@ -8,10 +8,10 @@ MappingInfo::MappingInfo(const dyld_cache_mapping_info *info)
     : address(info->address), size(info->size), fileOffset(info->fileOffset) {}
 
 template <bool ro, class P>
-SegmentContext<ro, P>::SegmentContext(_SegmentCommandT *segment)
+SegmentContext<ro, P>::SegmentContext(SegmentCommandT *segment)
     : command(segment) {
     auto *sectStart =
-        (typename c_const<ro, uint8_t>::T *)segment + sizeof(_SegmentCommandT);
+        (typename c_const<ro, uint8_t>::T *)segment + sizeof(SegmentCommandT);
     for (uint32_t i = 0; i < segment->nsects; i++) {
         auto sect = (SectionT *)(sectStart + (i * sizeof(SectionT)));
         sections.emplace_back(sect);
@@ -137,6 +137,12 @@ Context<ro, P>::convertAddr(uint64_t addr) const {
     }
 
     return std::make_pair(0, nullptr);
+}
+
+template <bool ro, class P>
+Context<ro, P>::_FileT *Context<ro, P>::convertAddrP(uint64_t addr) const {
+    auto [offset, file] = convertAddr(addr);
+    return file ? file + offset : nullptr;
 }
 
 template <bool ro, class P>

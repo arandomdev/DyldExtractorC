@@ -27,15 +27,14 @@ struct MappingInfo {
 };
 
 template <bool ro, class P> class SegmentContext {
-    using _SegmentCommandT = c_const<ro, Loader::segment_command<P>>::T;
-
   public:
+    using SegmentCommandT = c_const<ro, Loader::segment_command<P>>::T;
     using SectionT = c_const<ro, Loader::section<P>>::T;
 
-    _SegmentCommandT *command;
+    SegmentCommandT *command;
     std::vector<SectionT *> sections;
 
-    SegmentContext(_SegmentCommandT *segment);
+    SegmentContext(SegmentCommandT *segment);
 };
 
 /// A wrapper around a MachO file in the DSC.
@@ -83,12 +82,20 @@ template <bool ro, class P> class Context {
         std::vector<std::tuple<fs::path, std::vector<MappingInfo>>> subFiles);
 
     /// Convert a vmaddr to it's file offset.
-    /// If the offset could not be found, a tuple with 0 and
+    /// If the offset could not be found, a pair with 0 and
     /// nullptr will be returned.
     ///
     /// @param addr The virtual address to convert.
     /// @returns A pair of the file offset and its file.
     std::pair<uint64_t, _FileT *> convertAddr(uint64_t addr) const;
+
+    /// Convert a vmaddr to it's file offset.
+    /// If the offset could not be found, nullptr will be
+    /// returned.
+    ///
+    /// @param addr The virtual address to convert.
+    /// @returns A file based pointer to the address
+    _FileT *convertAddrP(uint64_t addr) const;
 
     /// Get load commands
     ///

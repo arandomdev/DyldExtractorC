@@ -148,7 +148,7 @@ void LinkeditOptimizer<P>::copyBindingInfo(uint8_t *newLinkedit,
         _activity.update(std::nullopt, "Copying binding info");
         memcpy(newLinkedit + offset, _linkeditFile + _dyldInfo->bind_off, size);
 
-        Utils::align(size, 8);
+        Utils::alignR(size, 8);
         _headerTracker.trackData(Utils::LinkeditData(
             (uint8_t *)_dyldInfo +
                 offsetof(Macho::Loader::dyld_info_command, bind_off),
@@ -172,7 +172,7 @@ void LinkeditOptimizer<P>::copyWeakBindingInfo(uint8_t *newLinkedit,
         memcpy(newLinkedit + offset, _linkeditFile + _dyldInfo->weak_bind_off,
                size);
 
-        Utils::align(size, 8);
+        Utils::alignR(size, 8);
         _headerTracker.trackData(Utils::LinkeditData(
             (uint8_t *)_dyldInfo +
                 offsetof(Macho::Loader::dyld_info_command, weak_bind_off),
@@ -197,7 +197,7 @@ void LinkeditOptimizer<P>::copyLazyBindingInfo(uint8_t *newLinkedit,
         memcpy(newLinkedit + offset, _linkeditFile + _dyldInfo->lazy_bind_off,
                size);
 
-        Utils::align(size, 8);
+        Utils::alignR(size, 8);
         _headerTracker.trackData(Utils::LinkeditData(
             (uint8_t *)_dyldInfo +
                 offsetof(Macho::Loader::dyld_info_command, lazy_bind_off),
@@ -236,7 +236,7 @@ void LinkeditOptimizer<P>::copyExportInfo(uint8_t *newLinkedit,
         _activity.update(std::nullopt, "Copying export info");
         memcpy(newLinkedit + offset, data, dataSize);
 
-        Utils::align(dataSize, 8);
+        Utils::alignR(dataSize, 8);
         _headerTracker.trackData(Utils::LinkeditData(
             dataFieldOff, _linkeditStart + offset, dataSize));
         *(uint32_t *)dataFieldOff = _linkeditStart + offset;
@@ -388,7 +388,7 @@ void LinkeditOptimizer<P>::endSymbolEntries(uint8_t *newLinkedit,
     offset += sizeof(Macho::Loader::nlist<P>) * _redactedSymbolsCount;
 
     auto symEntrySize = (uint32_t)(offset - _newSymbolEntriesStart);
-    Utils::align(symEntrySize, 8);
+    Utils::alignR(symEntrySize, 8);
 
     _headerTracker.trackData(Utils::LinkeditData(
         (uint8_t *)_symTab + offsetof(Macho::Loader::symtab_command, symoff),
@@ -412,7 +412,7 @@ void LinkeditOptimizer<P>::copyFunctionStarts(uint8_t *newLinkedit,
         memcpy(newLinkedit + offset, _linkeditFile + functionStarts->dataoff,
                size);
 
-        Utils::align(size, 8);
+        Utils::alignR(size, 8);
         _headerTracker.trackData(Utils::LinkeditData(
             (uint8_t *)functionStarts +
                 offsetof(Macho::Loader::linkedit_data_command, dataoff),
@@ -439,7 +439,7 @@ void LinkeditOptimizer<P>::copyDataInCode(uint8_t *newLinkedit,
         _activity.update(std::nullopt, "Copying data in code");
         memcpy(newLinkedit + offset, _linkeditFile + dataInCode->dataoff, size);
 
-        Utils::align(size, 8);
+        Utils::alignR(size, 8);
         _headerTracker.trackData(Utils::LinkeditData(
             (uint8_t *)dataInCode +
                 offsetof(Macho::Loader::linkedit_data_command, dataoff),
@@ -477,7 +477,7 @@ void LinkeditOptimizer<P>::copyIndirectSymbolTable(uint8_t *newLinkedit,
     }
 
     uint32_t size = _dySymTab->nindirectsyms * sizeof(uint32_t);
-    Utils::align(size, 8);
+    Utils::alignR(size, 8);
     _headerTracker.trackData(Utils::LinkeditData(
         (uint8_t *)_dySymTab +
             offsetof(Macho::Loader::dysymtab_command, indirectsymoff),
@@ -496,7 +496,7 @@ void LinkeditOptimizer<P>::copyStringPool(uint8_t *newLinkedit,
     _symTab->stroff = _linkeditOffset + offset;
     _symTab->strsize = size;
 
-    Utils::align(size, 8);
+    Utils::alignR(size, 8);
     _headerTracker.trackData(Utils::LinkeditData(
         (uint8_t *)_symTab + offsetof(Macho::Loader::symtab_command, stroff),
         _linkeditStart + offset, size));
@@ -754,9 +754,8 @@ void Converter::optimizeLinkedit(Utils::ExtractionContext<P> eCtx) {
     optimizer.copyStringPool(newLinkedit, offset);
 
     // Copy new linkedit
-    auto [linkeditOff, linkeditFile] =
-        eCtx.mCtx.convertAddr(linkeditSeg->command->vmaddr);
-    memcpy(linkeditFile + linkeditOff, newLinkedit, offset);
+    auto oldLinkedit = eCtx.mCtx.convertAddrP(linkeditSeg->command->vmaddr);
+    memcpy(oldLinkedit, newLinkedit, offset);
     optimizer.updateLoadCommands(offset);
 
     free(newLinkedit);

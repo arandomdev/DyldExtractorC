@@ -60,9 +60,8 @@ Converter::optimizeOffsets(Utils::ExtractionContext<P> eCtx) {
         }
 
         // create procedure
-        auto [segOff, segCtx] = mCtx.convertAddr(segment.command->vmaddr);
-        procedures.emplace_back(dataHead, segCtx + segOff,
-                                segment.command->filesize);
+        auto segData = mCtx.convertAddrP(segment.command->vmaddr);
+        procedures.emplace_back(dataHead, segData, segment.command->filesize);
 
         // shift the segment and sections
         int32_t shiftDelta = dataHead - (uint32_t)segment.command->fileoff;

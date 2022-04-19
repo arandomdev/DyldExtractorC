@@ -8,6 +8,7 @@ add_library (DyldExtractor
 	Dyld/Context.cpp
 	Macho/Context.cpp
 	Utils/HeaderTracker.cpp
+	Utils/PointerTracker.cpp
 )
 
 target_link_libraries (DyldExtractor PUBLIC ${Boost_LIBRARIES})

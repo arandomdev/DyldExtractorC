@@ -17,6 +17,7 @@ class Context {
     const uint8_t *file;
     const dyld_cache_header *header;
     std::vector<const dyld_cache_image_info *> images;
+    std::vector<Context> subcaches;
 
     Context(fs::path sharedCachePath);
     ~Context();
@@ -26,12 +27,20 @@ class Context {
     Context &operator=(Context &&other);
 
     /// Convert a vmaddr to it's file offset.
-    /// If the offset could not be found, a tuple with 0 and
+    /// If the offset could not be found, a pair with 0 and
     /// nullptr will be returned.
     ///
     /// @param addr The virtual address to convert.
     /// @returns A pair of the file offset and its Context.
     std::pair<uint64_t, const Context *> convertAddr(uint64_t addr) const;
+
+    /// Convert a vmaddr to it's file offset.
+    /// If the offset could not be found, nullptr will be
+    /// returned.
+    ///
+    /// @param addr The virtual address to convert.
+    /// @returns A file based pointer to the address
+    const uint8_t *convertAddrP(uint64_t addr) const;
 
     /// Determine if a member is contained in the header
     ///
@@ -58,7 +67,6 @@ class Context {
     // False when the cacheFile is not constructed, closed, or moved.
     bool _cacheOpen = false;
 
-    std::vector<Context> _subcaches;
     std::vector<const dyld_cache_mapping_info *> _mappings;
 };
 

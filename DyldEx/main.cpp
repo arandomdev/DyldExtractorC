@@ -7,11 +7,13 @@
 
 #include <Converter/LinkeditOptimizer.h>
 #include <Converter/OffsetOptimizer.h>
+#include <Converter/Slide.h>
 #include <Dyld/Context.h>
 #include <Logger/ActivityLogger.h>
 #include <Macho/Context.h>
 #include <Utils/ExtractionContext.h>
 #include <Utils/HeaderTracker.h>
+#include <Utils/PointerTracker.h>
 
 namespace fs = std::filesystem;
 
@@ -130,11 +132,13 @@ void extractImage(Dyld::Context &dCtx, ProgramArguments args) {
     activity.update("DyldEx", "Starting up");
 
     auto mCtx = dCtx.createMachoCtx<false, A::P>(imageInfo);
-    Utils::HeaderTracker<A::P> headerTracker(&mCtx);
+    Utils::HeaderTracker<A::P> headerTracker(mCtx);
+    Utils::PointerTracker<A::P> pointerTracker(dCtx);
     Utils::ExtractionContext<A::P> eCtx(dCtx, mCtx, activity, activity.logger,
-                                        headerTracker);
+                                        headerTracker, pointerTracker);
 
     // Convert
+    Converter::processSlideInfo(eCtx);
     Converter::optimizeLinkedit(eCtx);
     auto writeProcedures = Converter::optimizeOffsets<A::P>(eCtx);
 

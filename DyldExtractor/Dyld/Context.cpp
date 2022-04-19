@@ -27,7 +27,7 @@ Context::Context(fs::path sharedCachePath) {
                 cachePath = filePath;
             } else if (filePath.extension() != ".map") {
                 // Filter out .map files
-                _subcaches.emplace_back(filePath);
+                subcaches.emplace_back(filePath);
             }
         }
     }
@@ -83,7 +83,7 @@ Context::Context(Context &&other)
     : file(other.file), header(other.header),
       _cacheFile(std::move(other._cacheFile)),
       _cachePath(std::move(other._cachePath)), _cacheOpen(other._cacheOpen),
-      _subcaches(std::move(other._subcaches)),
+      subcaches(std::move(other.subcaches)),
       _mappings(std::move(other._mappings)) {
     other.file = nullptr;
     other.header = nullptr;
@@ -97,7 +97,7 @@ Context &Context::operator=(Context &&other) {
 
     this->_cacheFile = std::move(other._cacheFile);
     this->_cachePath = std::move(other._cachePath);
-    this->_subcaches = std::move(other._subcaches);
+    this->subcaches = std::move(other.subcaches);
     this->_mappings = std::move(other._mappings);
 
     other.file = nullptr;
@@ -116,7 +116,7 @@ std::pair<uint64_t, const Context *> Context::convertAddr(uint64_t addr) const {
         }
     }
 
-    for (auto const &subcache : _subcaches) {
+    for (auto const &subcache : subcaches) {
         auto convert = subcache.convertAddr(addr);
         if (convert.second != nullptr) {
             return convert;
@@ -124,6 +124,11 @@ std::pair<uint64_t, const Context *> Context::convertAddr(uint64_t addr) const {
     }
 
     return std::make_pair(0, nullptr);
+}
+
+const uint8_t *Context::convertAddrP(uint64_t addr) const {
+    auto [offset, ctx] = convertAddr(addr);
+    return ctx ? ctx->file + offset : nullptr;
 }
 
 bool Context::headerContainsMember(std::size_t memberOffset) const {
@@ -150,7 +155,7 @@ Context::createMachoCtx(const dyld_cache_image_info *imageInfo) const {
         std::vector<
             std::tuple<bio::mapped_file, std::vector<Macho::MappingInfo>>>
             subFiles;
-        subFiles.reserve(_subcaches.size());
+        subFiles.reserve(subcaches.size());
 
         // Add this cache if necessary
         if (file != mainCache->file) {
@@ -158,7 +163,7 @@ Context::createMachoCtx(const dyld_cache_image_info *imageInfo) const {
         }
 
         // Add subcaches
-        for (auto &cache : _subcaches) {
+        for (auto &cache : subcaches) {
             if (cache.file != mainCache->file) {
                 subFiles.emplace_back(cache._cacheFile,
                                       getMappings(cache._mappings));
@@ -171,7 +176,7 @@ Context::createMachoCtx(const dyld_cache_image_info *imageInfo) const {
         // Make a writable macho context by giving the paths
         std::vector<std::tuple<fs::path, std::vector<Macho::MappingInfo>>>
             subFiles;
-        subFiles.reserve(_subcaches.size());
+        subFiles.reserve(subcaches.size());
 
         // Add this cache if necessary
         if (file != mainCache->file) {
@@ -179,7 +184,7 @@ Context::createMachoCtx(const dyld_cache_image_info *imageInfo) const {
         }
 
         // Add subcaches
-        for (auto &cache : _subcaches) {
+        for (auto &cache : subcaches) {
             if (cache.file != mainCache->file) {
                 subFiles.emplace_back(cache._cachePath,
                                       getMappings(cache._mappings));
@@ -205,11 +210,11 @@ Context::createMachoCtx<false, Utils::Pointer64>(
     const dyld_cache_image_info *imageInfo) const;
 
 const Context *Context::getSymbolsCache() const {
-    if (!_subcaches.size()) {
+    if (!subcaches.size()) {
         return this;
     }
 
-    for (auto &cache : _subcaches) {
+    for (auto &cache : subcaches) {
         if (memcmp(header->symbolFileUUID, cache.header->uuid, 16) == 0) {
             return &cache;
         }

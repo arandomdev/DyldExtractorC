@@ -3,27 +3,24 @@
 using namespace Utils;
 
 template <class P>
-HeaderTracker<P>::HeaderTracker(Macho::Context<false, P> *mCtx)
-    : _header(mCtx->header) {
-    auto textSect = mCtx->getSection("__TEXT", "__text");
+HeaderTracker<P>::HeaderTracker(Macho::Context<false, P> &mCtx)
+    : _header(mCtx.header) {
+    auto textSect = mCtx.getSection("__TEXT", "__text");
     if (!textSect) {
         throw std::invalid_argument(
             "Mach-O Context doesn't have a __text sect.");
     }
-    auto [textSectOff, textSectFile] = mCtx->convertAddr(textSect->addr);
+    auto textSectStart = mCtx.convertAddrP(textSect->addr);
     _commandsStart =
         (uint8_t *)_header + sizeof(Macho::Context<false, P>::HeaderT);
-    _headerSpaceAvailable =
-        (uint32_t)((textSectFile + textSectOff) - _commandsStart);
+    _headerSpaceAvailable = (uint32_t)(textSectStart - _commandsStart);
 
-    auto linkeditSeg = mCtx->getSegment("__LINKEDIT");
+    auto linkeditSeg = mCtx.getSegment("__LINKEDIT");
     if (!linkeditSeg) {
         throw std::invalid_argument(
             "Mach-O Context doesn't have a __LINKEDIT segment.");
     }
-    auto [linkeditOff, linkeditFile] =
-        mCtx->convertAddr(linkeditSeg->command->vmaddr);
-    _linkeditStart = linkeditFile + linkeditOff;
+    _linkeditStart = mCtx.convertAddrP(linkeditSeg->command->vmaddr);
     _linkeditEnd = _linkeditStart + linkeditSeg->command->vmsize;
 }
 

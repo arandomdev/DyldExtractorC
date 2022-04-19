@@ -4,6 +4,7 @@
 #include <spdlog/logger.h>
 
 #include "HeaderTracker.h"
+#include "PointerTracker.h"
 #include <Dyld/Context.h>
 #include <Logger/ActivityLogger.h>
 #include <Macho/Context.h>
@@ -16,8 +17,8 @@ template <class P> struct ExtractionContext {
     ActivityLogger &activity;
     std::shared_ptr<spdlog::logger> logger;
     HeaderTracker<P> &headerTracker;
+    PointerTracker<P> &pointerTracker;
 
-    ///
     /// If this variable is true, the following is true,
     /// * There are redacted indirect symbol entries.
     /// * Space was allocated for the redacted symbol entries.

@@ -18,7 +18,7 @@ struct LinkeditData {
 // Tracks and manages offsets from load commands and data.
 template <class P> class HeaderTracker {
   public:
-    HeaderTracker(Macho::Context<false, P> *mCtx);
+    HeaderTracker(Macho::Context<false, P> &mCtx);
 
     /// Insert data into the header.
     ///
