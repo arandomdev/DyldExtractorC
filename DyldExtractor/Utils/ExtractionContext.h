@@ -3,21 +3,28 @@
 
 #include <spdlog/logger.h>
 
-#include "HeaderTracker.h"
-#include "PointerTracker.h"
 #include <Dyld/Context.h>
 #include <Logger/ActivityLogger.h>
 #include <Macho/Context.h>
 
+namespace Converter {
+template <class P> class LinkeditTracker;
+template <class P> class PointerTracker;
+template <class P> class Symbolizer;
+}; // namespace Converter
+
 namespace Utils {
 
-template <class P> struct ExtractionContext {
+template <class P> class ExtractionContext {
+  public:
     Dyld::Context &dCtx;
     Macho::Context<false, P> &mCtx;
-    ActivityLogger &activity;
+    ActivityLogger *activity;
     std::shared_ptr<spdlog::logger> logger;
-    HeaderTracker<P> &headerTracker;
-    PointerTracker<P> &pointerTracker;
+
+    Converter::LinkeditTracker<P> *linkeditTracker = nullptr;
+    Converter::PointerTracker<P> *pointerTracker = nullptr;
+    Converter::Symbolizer<P> *symbolizer = nullptr;
 
     /// If this variable is true, the following is true,
     /// * There are redacted indirect symbol entries.
@@ -26,6 +33,14 @@ template <class P> struct ExtractionContext {
     /// * The string table to at the end of the LINKEDIT segment.
     ///
     bool hasRedactedIndirect = false;
+
+    ExtractionContext(Dyld::Context &dCtx, Macho::Context<false, P> &mCtx,
+                      ActivityLogger *activity);
+    ExtractionContext(const ExtractionContext<P> &other) = delete;
+    ExtractionContext(ExtractionContext<P> &&other);
+    ExtractionContext &operator=(const ExtractionContext<P> &other) = delete;
+    ExtractionContext &operator=(ExtractionContext<P> &&other);
+    ~ExtractionContext();
 };
 
 }; // namespace Utils

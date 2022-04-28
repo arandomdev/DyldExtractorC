@@ -4,11 +4,11 @@ add_library (DyldExtractor
 	Converter/LinkeditOptimizer.cpp
 	Converter/OffsetOptimizer.cpp
 	Converter/Slide.cpp
+	Converter/Stubs.cpp
 	Logger/ActivityLogger.cpp
 	Dyld/Context.cpp
 	Macho/Context.cpp
-	Utils/HeaderTracker.cpp
-	Utils/PointerTracker.cpp
+	Utils/ExtractionContext.cpp
 )
 
 target_link_libraries (DyldExtractor PUBLIC ${Boost_LIBRARIES})

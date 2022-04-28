@@ -74,8 +74,10 @@ void ActivityLogger::update(std::optional<std::string> moduleName,
 }
 
 void ActivityLogger::stopActivity() {
-    _enableActivity = false;
-    _activityStream << "\n";
+    if (_enableActivity) {
+        _enableActivity = false;
+        _activityStream << "\n";
+    }
 }
 
 void ActivityLogger::_updateActivity(bool fullRefesh) {

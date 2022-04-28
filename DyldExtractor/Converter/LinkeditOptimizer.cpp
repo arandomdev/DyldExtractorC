@@ -6,6 +6,111 @@
 
 using namespace Converter;
 
+template <class P>
+LinkeditTracker<P>::LinkeditTracker(Macho::Context<false, P> &mCtx)
+    : _header(mCtx.header) {
+    auto textSect = mCtx.getSection("__TEXT", "__text");
+    if (!textSect) {
+        throw std::invalid_argument(
+            "Mach-O Context doesn't have a __text sect.");
+    }
+    auto textSectStart = mCtx.convertAddrP(textSect->addr);
+    _commandsStart =
+        (uint8_t *)_header + sizeof(Macho::Context<false, P>::HeaderT);
+    _headerSpaceAvailable = (uint32_t)(textSectStart - _commandsStart);
+
+    auto linkeditSeg = mCtx.getSegment("__LINKEDIT");
+    if (!linkeditSeg) {
+        throw std::invalid_argument(
+            "Mach-O Context doesn't have a __LINKEDIT segment.");
+    }
+    _linkeditStart = mCtx.convertAddrP(linkeditSeg->command->vmaddr);
+    _linkeditEnd = _linkeditStart + linkeditSeg->command->vmsize;
+}
+
+template <class P>
+bool LinkeditTracker<P>::insertLoadCommand(Macho::Loader::load_command *after,
+                                           Macho::Loader::load_command *lc) {
+    // Make sure there is enough space
+    if (_header->sizeofcmds + lc->cmdsize > _headerSpaceAvailable) {
+        return false;
+    }
+
+    // Move all load commands after `after`
+    std::size_t shiftDelta = lc->cmdsize;
+    uint8_t *shiftStart = (uint8_t *)after + after->cmdsize;
+    uint8_t *shiftEnd = _commandsStart + _header->sizeofcmds;
+    memmove(shiftStart + shiftDelta, shiftStart, shiftEnd - shiftStart);
+
+    memcpy(shiftStart, lc, lc->cmdsize);
+
+    // Adjust tracking pointers
+    for (auto &ptrPair : trackingData) {
+        if (ptrPair.offset >= shiftStart) {
+            ptrPair.offset += shiftDelta;
+        }
+    }
+
+    // Adjust header
+    _header->ncmds++;
+    _header->sizeofcmds += lc->cmdsize;
+    return true;
+}
+
+template <class P>
+bool LinkeditTracker<P>::insertLinkeditData(std::optional<LinkeditData> after,
+                                            LinkeditData data) {
+    // calculate shift amount with pointer align
+    uint32_t shiftDelta = data.dataSize + (8 - (data.dataSize % 8));
+
+    // Check that there is enough space
+    uint8_t *lastDataEnd;
+    if (trackingData.size()) {
+        auto lastData = *trackingData.rbegin();
+        lastDataEnd = lastData.data + lastData.dataSize;
+    } else {
+        lastDataEnd = _linkeditStart;
+    }
+    if (lastDataEnd + shiftDelta > _linkeditEnd) {
+        return false;
+    }
+
+    // Shift all data after `after`
+    uint8_t *shiftStart =
+        after ? after->data + after->dataSize : _linkeditStart;
+    memmove(shiftStart + shiftDelta, shiftStart, lastDataEnd - shiftStart);
+
+    // Update tracking data
+    for (auto &trackedData : trackingData) {
+        if (trackedData.data >= shiftStart) {
+            *(uint32_t *)trackedData.offset += shiftDelta;
+            trackedData.data += shiftDelta;
+        }
+    }
+
+    // zero out pointer align padding and set data
+    memset(shiftStart + shiftDelta - 8, 0, 8);
+    memcpy(shiftStart, data.data, data.dataSize);
+
+    // update data and add to tracking
+    data.data = shiftStart;
+    data.dataSize = shiftDelta; // include padding
+    trackData(data);
+    return true;
+}
+
+template <class P> void LinkeditTracker<P>::trackData(LinkeditData data) {
+    auto it =
+        std::lower_bound(trackingData.begin(), trackingData.end(), data,
+                         [](const LinkeditData &a, const LinkeditData &b) {
+                             return a.data < b.data;
+                         });
+    trackingData.insert(it, data);
+}
+
+template class LinkeditTracker<Utils::Pointer32>;
+template class LinkeditTracker<Utils::Pointer64>;
+
 class StringPool {
   public:
     StringPool();
@@ -63,7 +168,7 @@ uint32_t StringPool::writeStrings(uint8_t *dest) {
 
 template <class P> class LinkeditOptimizer {
   public:
-    LinkeditOptimizer(Utils::ExtractionContext<P> eCtx);
+    LinkeditOptimizer(Utils::ExtractionContext<P> &eCtx);
 
     void copyBindingInfo(uint8_t *newLinkedit, uint32_t &offset);
     void copyWeakBindingInfo(uint8_t *newLinkedit, uint32_t &offset);
@@ -93,12 +198,12 @@ template <class P> class LinkeditOptimizer {
     uint32_t _copyPublicLocalSymbols(uint8_t *newLinkedit, uint32_t &offset);
     uint32_t _copyRedactedLocalSymbols(uint8_t *newLinkedit, uint32_t &offset);
 
-    Utils::ExtractionContext<P> _eCtx;
+    Utils::ExtractionContext<P> &_eCtx;
     Dyld::Context &_dCtx;
     Macho::Context<false, P> &_mCtx;
     ActivityLogger &_activity;
     std::shared_ptr<spdlog::logger> _logger;
-    Utils::HeaderTracker<P> &_headerTracker;
+    LinkeditTracker<P> &_linkeditTracker;
 
     StringPool _stringsPool;
     uint32_t _symbolsCount = 0;
@@ -117,9 +222,10 @@ template <class P> class LinkeditOptimizer {
 };
 
 template <class P>
-LinkeditOptimizer<P>::LinkeditOptimizer(Utils::ExtractionContext<P> eCtx)
-    : _eCtx(eCtx), _dCtx(eCtx.dCtx), _mCtx(eCtx.mCtx), _activity(eCtx.activity),
-      _logger(eCtx.logger), _headerTracker(eCtx.headerTracker) {
+LinkeditOptimizer<P>::LinkeditOptimizer(Utils::ExtractionContext<P> &eCtx)
+    : _eCtx(eCtx), _dCtx(eCtx.dCtx), _mCtx(eCtx.mCtx),
+      _activity(*eCtx.activity), _logger(eCtx.logger),
+      _linkeditTracker(*eCtx.linkeditTracker) {
     auto &mCtx = eCtx.mCtx;
 
     auto [offset, file] =
@@ -149,7 +255,7 @@ void LinkeditOptimizer<P>::copyBindingInfo(uint8_t *newLinkedit,
         memcpy(newLinkedit + offset, _linkeditFile + _dyldInfo->bind_off, size);
 
         Utils::alignR(size, 8);
-        _headerTracker.trackData(Utils::LinkeditData(
+        _linkeditTracker.trackData(LinkeditData(
             (uint8_t *)_dyldInfo +
                 offsetof(Macho::Loader::dyld_info_command, bind_off),
             _linkeditStart + offset, size));
@@ -173,7 +279,7 @@ void LinkeditOptimizer<P>::copyWeakBindingInfo(uint8_t *newLinkedit,
                size);
 
         Utils::alignR(size, 8);
-        _headerTracker.trackData(Utils::LinkeditData(
+        _linkeditTracker.trackData(LinkeditData(
             (uint8_t *)_dyldInfo +
                 offsetof(Macho::Loader::dyld_info_command, weak_bind_off),
             _linkeditStart + offset, size));
@@ -198,7 +304,7 @@ void LinkeditOptimizer<P>::copyLazyBindingInfo(uint8_t *newLinkedit,
                size);
 
         Utils::alignR(size, 8);
-        _headerTracker.trackData(Utils::LinkeditData(
+        _linkeditTracker.trackData(LinkeditData(
             (uint8_t *)_dyldInfo +
                 offsetof(Macho::Loader::dyld_info_command, lazy_bind_off),
             _linkeditStart + offset, size));
@@ -237,8 +343,8 @@ void LinkeditOptimizer<P>::copyExportInfo(uint8_t *newLinkedit,
         memcpy(newLinkedit + offset, data, dataSize);
 
         Utils::alignR(dataSize, 8);
-        _headerTracker.trackData(Utils::LinkeditData(
-            dataFieldOff, _linkeditStart + offset, dataSize));
+        _linkeditTracker.trackData(
+            LinkeditData(dataFieldOff, _linkeditStart + offset, dataSize));
         *(uint32_t *)dataFieldOff = _linkeditStart + offset;
 
         offset += dataSize;
@@ -390,7 +496,7 @@ void LinkeditOptimizer<P>::endSymbolEntries(uint8_t *newLinkedit,
     auto symEntrySize = (uint32_t)(offset - _newSymbolEntriesStart);
     Utils::alignR(symEntrySize, 8);
 
-    _headerTracker.trackData(Utils::LinkeditData(
+    _linkeditTracker.trackData(LinkeditData(
         (uint8_t *)_symTab + offsetof(Macho::Loader::symtab_command, symoff),
         _linkeditStart + _newSymbolEntriesStart, symEntrySize));
     _symTab->symoff = _linkeditOffset + _newSymbolEntriesStart;
@@ -413,7 +519,7 @@ void LinkeditOptimizer<P>::copyFunctionStarts(uint8_t *newLinkedit,
                size);
 
         Utils::alignR(size, 8);
-        _headerTracker.trackData(Utils::LinkeditData(
+        _linkeditTracker.trackData(LinkeditData(
             (uint8_t *)functionStarts +
                 offsetof(Macho::Loader::linkedit_data_command, dataoff),
             _linkeditStart + offset, size));
@@ -440,7 +546,7 @@ void LinkeditOptimizer<P>::copyDataInCode(uint8_t *newLinkedit,
         memcpy(newLinkedit + offset, _linkeditFile + dataInCode->dataoff, size);
 
         Utils::alignR(size, 8);
-        _headerTracker.trackData(Utils::LinkeditData(
+        _linkeditTracker.trackData(LinkeditData(
             (uint8_t *)dataInCode +
                 offsetof(Macho::Loader::linkedit_data_command, dataoff),
             _linkeditStart + offset, size));
@@ -478,7 +584,7 @@ void LinkeditOptimizer<P>::copyIndirectSymbolTable(uint8_t *newLinkedit,
 
     uint32_t size = _dySymTab->nindirectsyms * sizeof(uint32_t);
     Utils::alignR(size, 8);
-    _headerTracker.trackData(Utils::LinkeditData(
+    _linkeditTracker.trackData(LinkeditData(
         (uint8_t *)_dySymTab +
             offsetof(Macho::Loader::dysymtab_command, indirectsymoff),
         _linkeditStart + offset, size));
@@ -497,7 +603,7 @@ void LinkeditOptimizer<P>::copyStringPool(uint8_t *newLinkedit,
     _symTab->strsize = size;
 
     Utils::alignR(size, 8);
-    _headerTracker.trackData(Utils::LinkeditData(
+    _linkeditTracker.trackData(LinkeditData(
         (uint8_t *)_symTab + offsetof(Macho::Loader::symtab_command, stroff),
         _linkeditStart + offset, size));
 
@@ -646,7 +752,7 @@ uint32_t LinkeditOptimizer<P>::_copyRedactedLocalSymbols(uint8_t *newLinkedit,
 }
 
 /// Check all load commands for unknown load commands
-template <class P> void checkLoadCommands(Utils::ExtractionContext<P> eCtx) {
+template <class P> void checkLoadCommands(Utils::ExtractionContext<P> &eCtx) {
     for (auto lc : eCtx.mCtx.loadCommands) {
         switch (lc->cmd) {
         case LC_SEGMENT:    // segment_command
@@ -723,9 +829,10 @@ template <class P> void checkLoadCommands(Utils::ExtractionContext<P> eCtx) {
 }
 
 template <class P>
-void Converter::optimizeLinkedit(Utils::ExtractionContext<P> eCtx) {
-    eCtx.activity.update("Linkedit Optimizer", "Optimizing Linkedit");
+void Converter::optimizeLinkedit(Utils::ExtractionContext<P> &eCtx) {
+    eCtx.activity->update("Linkedit Optimizer", "Optimizing Linkedit");
     checkLoadCommands(eCtx);
+    eCtx.linkeditTracker = new LinkeditTracker<P>(eCtx.mCtx);
 
     auto linkeditSeg = eCtx.mCtx.getSegment("__LINKEDIT");
     if (!linkeditSeg) {
@@ -763,6 +870,6 @@ void Converter::optimizeLinkedit(Utils::ExtractionContext<P> eCtx) {
 }
 
 template void Converter::optimizeLinkedit<Utils::Pointer32>(
-    Utils::ExtractionContext<Utils::Pointer32> eCtx);
+    Utils::ExtractionContext<Utils::Pointer32> &eCtx);
 template void Converter::optimizeLinkedit<Utils::Pointer64>(
-    Utils::ExtractionContext<Utils::Pointer64> eCtx);
+    Utils::ExtractionContext<Utils::Pointer64> &eCtx);

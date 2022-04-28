@@ -155,6 +155,12 @@ template <bool ro, class P> class Context {
     SegmentContext<ro, P>::SectionT *getSection(const char *segName,
                                                 const char *sectName) const;
 
+    /// Check if the address is in the macho file
+    ///
+    /// @param addr
+    /// @returns If the file contains the address
+    bool containsAddr(const uint64_t addr) const;
+
     ~Context();
     Context(const Context &other) = delete;
     Context(Context &&other);

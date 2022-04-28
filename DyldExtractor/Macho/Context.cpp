@@ -193,6 +193,18 @@ Context<ro, P>::getSection(const char *segName, const char *sectName) const {
 }
 
 template <bool ro, class P>
+bool Context<ro, P>::containsAddr(const uint64_t addr) const {
+    for (auto &seg : segments) {
+        if (addr >= seg.command->vmaddr &&
+            addr < seg.command->vmaddr + seg.command->vmsize) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+template <bool ro, class P>
 std::vector<typename c_const<ro, Loader::load_command>::T *>
 Context<ro, P>::_getLoadCommands(const uint32_t (&targetCmds)[],
                                  std::size_t ncmds) const {

@@ -12,8 +12,6 @@
 #include <Logger/ActivityLogger.h>
 #include <Macho/Context.h>
 #include <Utils/ExtractionContext.h>
-#include <Utils/HeaderTracker.h>
-#include <Utils/PointerTracker.h>
 
 namespace fs = std::filesystem;
 
@@ -112,14 +110,15 @@ void extractImage(Dyld::Context &dCtx, ProgramArguments args) {
     auto extractionTargetFilter = *args.extractImage;
     auto possibleTargets = getImages(dCtx, args.extractImage);
     if (possibleTargets.size() == 0) {
-        std::cerr << "Unable to find image '" + extractionTargetFilter + "'"
+        std::cerr << std::format("Unable to find image '{}'",
+                                 extractionTargetFilter)
                   << std::endl;
         return;
     }
 
     auto &[imageIndex, imagePath] = possibleTargets[0];
     auto imageInfo = dCtx.images[imageIndex];
-    std::cout << "Extracting '" + imagePath + "'" << std::endl;
+    std::cout << std::format("Extracting '{}'", imagePath) << std::endl;
 
     // Setup context
     ActivityLogger activity("DyldEx", std::cout, true);
@@ -132,10 +131,7 @@ void extractImage(Dyld::Context &dCtx, ProgramArguments args) {
     activity.update("DyldEx", "Starting up");
 
     auto mCtx = dCtx.createMachoCtx<false, A::P>(imageInfo);
-    Utils::HeaderTracker<A::P> headerTracker(mCtx);
-    Utils::PointerTracker<A::P> pointerTracker(dCtx);
-    Utils::ExtractionContext<A::P> eCtx(dCtx, mCtx, activity, activity.logger,
-                                        headerTracker, pointerTracker);
+    Utils::ExtractionContext<A::P> eCtx(dCtx, mCtx, &activity);
 
     // Convert
     Converter::processSlideInfo(eCtx);

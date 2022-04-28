@@ -16,7 +16,7 @@ struct WriteProcedure {
 ///
 /// @returns A vector of write procedures.
 template <class P>
-std::vector<WriteProcedure> optimizeOffsets(Utils::ExtractionContext<P> eCtx);
+std::vector<WriteProcedure> optimizeOffsets(Utils::ExtractionContext<P> &eCtx);
 
 }; // namespace Converter
 
