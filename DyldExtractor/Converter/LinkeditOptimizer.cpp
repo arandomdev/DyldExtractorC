@@ -2,6 +2,7 @@
 
 #include <format>
 #include <map>
+#include <spdlog/spdlog.h>
 #include <string_view>
 
 using namespace Converter;
@@ -237,10 +238,9 @@ LinkeditOptimizer<P>::LinkeditOptimizer(Utils::ExtractionContext<P> &eCtx)
     _dyldInfo = mCtx.getLoadCommand<false, Macho::Loader::dyld_info_command>();
     _symTab = mCtx.getLoadCommand<false, Macho::Loader::symtab_command>();
     _dySymTab = mCtx.getLoadCommand<false, Macho::Loader::dysymtab_command>();
-    constexpr static uint32_t exportTrieCmds[] = {LC_DYLD_EXPORTS_TRIE};
     _exportTrieCmd =
         mCtx.getLoadCommand<false, Macho::Loader::linkedit_data_command>(
-            exportTrieCmds);
+            {LC_DYLD_EXPORTS_TRIE});
 }
 
 template <class P>
@@ -407,7 +407,7 @@ void LinkeditOptimizer<P>::copyExportedSymbols(uint8_t *newLinkedit,
     _activity.update(std::nullopt, "Copying exported symbols");
 
     if (!_dySymTab) {
-        _logger->warn("Unable to copy exported symbols");
+        SPDLOG_LOGGER_WARN(_logger, "Unable to copy exported symbols");
         return;
     }
 
@@ -448,7 +448,7 @@ void LinkeditOptimizer<P>::copyImportedSymbols(uint8_t *newLinkedit,
     _activity.update(std::nullopt, "Copying imported symbols");
 
     if (!_dySymTab) {
-        _logger->warn("Unable to copy imported symbols");
+        SPDLOG_LOGGER_WARN(_logger, "Unable to copy imported symbols");
         return;
     }
 
@@ -506,9 +506,9 @@ void LinkeditOptimizer<P>::endSymbolEntries(uint8_t *newLinkedit,
 template <class P>
 void LinkeditOptimizer<P>::copyFunctionStarts(uint8_t *newLinkedit,
                                               uint32_t &offset) {
-    constexpr static uint32_t cmds[] = {LC_FUNCTION_STARTS};
     auto functionStarts =
-        _mCtx.getLoadCommand<false, Macho::Loader::linkedit_data_command>(cmds);
+        _mCtx.getLoadCommand<false, Macho::Loader::linkedit_data_command>(
+            {LC_FUNCTION_STARTS});
     if (!functionStarts) {
         return;
     }
@@ -534,9 +534,9 @@ void LinkeditOptimizer<P>::copyFunctionStarts(uint8_t *newLinkedit,
 template <class P>
 void LinkeditOptimizer<P>::copyDataInCode(uint8_t *newLinkedit,
                                           uint32_t &offset) {
-    constexpr static uint32_t cmds[] = {LC_DATA_IN_CODE};
     auto dataInCode =
-        _mCtx.getLoadCommand<false, Macho::Loader::linkedit_data_command>(cmds);
+        _mCtx.getLoadCommand<false, Macho::Loader::linkedit_data_command>(
+            {LC_DATA_IN_CODE});
     if (!dataInCode) {
         return;
     }
@@ -671,7 +671,7 @@ LinkeditOptimizer<P>::_findLocalSymbolEntries(
     }
 
     if (!nlistStart) {
-        _logger->error("Unable to find local symbol entries.");
+        SPDLOG_LOGGER_ERROR(_logger, "Unable to find local symbol entries.");
         return std::make_tuple(nullptr, nullptr);
     }
 
@@ -728,7 +728,7 @@ uint32_t LinkeditOptimizer<P>::_copyRedactedLocalSymbols(uint8_t *newLinkedit,
     auto [symsStart, symsEnd] =
         _findLocalSymbolEntries(symbolsCache, localSymsInfo);
     if (!symsStart) {
-        _logger->error("Unable to copy redacted local symbols.");
+        SPDLOG_LOGGER_ERROR(_logger, "Unable to copy redacted local symbols.");
     }
 
     uint32_t newLocalSymbolsCount = 0;
@@ -815,14 +815,16 @@ template <class P> void checkLoadCommands(Utils::ExtractionContext<P> &eCtx) {
         case LC_SYMSEG: // symseg_command, deprecated
         case LC_NOTE:   // note_command
             // May contain linkedit data, not handled.
-            eCtx.logger->warn(std::format(
+            SPDLOG_LOGGER_WARN(
+                eCtx.logger,
                 "Unhandled load command: {:#x}, may contain linkedit data.",
-                lc->cmd));
+                lc->cmd);
             break;
         default:
-            eCtx.logger->warn(std::format(
+            SPDLOG_LOGGER_WARN(
+                eCtx.logger,
                 "Unknown load command: {:#x}, may contain linkedit data.",
-                lc->cmd));
+                lc->cmd);
             break;
         }
     }

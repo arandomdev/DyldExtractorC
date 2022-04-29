@@ -1,6 +1,7 @@
 #include "Slide.h"
 
 #include <Utils/Architectures.h>
+#include <spdlog/spdlog.h>
 
 #ifdef _MSC_VER
 #include <intrin.h>
@@ -44,7 +45,8 @@ Converter::getMappingSlideInfo(const Utils::ExtractionContext<P> &eCtx) {
 
     if (!dCtx.headerContainsMember(
             offsetof(dyld_cache_header, mappingWithSlideOffset))) {
-        eCtx.logger->error("Unable to get mapping and slide info");
+        SPDLOG_LOGGER_ERROR(eCtx.logger,
+                            "Unable to get mapping and slide info");
         return mappingSlideInfo;
     }
 
@@ -130,8 +132,8 @@ P::uint_t PointerTracker<P>::slideP(const uint64_t address) const {
             break;
         }
         default:
-            _logger->error(std::format("Unknown slide info version {}",
-                                       map.slideInfoVersion));
+            SPDLOG_LOGGER_ERROR(_logger, "Unknown slide info version {}",
+                                map.slideInfoVersion);
         }
     }
 
@@ -285,14 +287,15 @@ void V2Processor::run() {
             if (page == DYLD_CACHE_SLIDE_PAGE_ATTR_NO_REBASE) {
                 continue;
             } else if (page & DYLD_CACHE_SLIDE_PAGE_ATTR_EXTRA) {
-                _eCtx.logger->error("Unable to handle extra pages");
+                SPDLOG_LOGGER_ERROR(_eCtx.logger,
+                                    "Unable to handle extra pages");
                 continue;
             } else if ((page & DYLD_CACHE_SLIDE_PAGE_ATTR_EXTRA) == 0) {
                 auto pageData = dataStart + (i * _slideInfo->page_size);
                 // The page starts are 32bit jumps
                 processPage(pageData, page * 4);
             } else {
-                _eCtx.logger->error("Unknown page start");
+                SPDLOG_LOGGER_ERROR(_eCtx.logger, "Unknown page start");
             }
 
             _eCtx.activity->update();
@@ -466,7 +469,7 @@ void V4Processor::run() {
                 }
 
             } else {
-                _eCtx.logger->error("Unknown page start");
+                SPDLOG_LOGGER_ERROR(_eCtx.logger, "Unknown page start");
             }
 
             _eCtx.activity->update();
@@ -503,14 +506,15 @@ void Converter::processSlideInfo(Utils::ExtractionContext<P> &eCtx) {
 
     auto mappings = getMappingSlideInfo(eCtx);
     if (!mappings.size()) {
-        eCtx.logger->warn("No slide mappings found.");
+        SPDLOG_LOGGER_WARN(eCtx.logger, "No slide mappings found.");
     }
 
     for (auto &map : mappings) {
         switch (map.slideInfoVersion) {
         case 1: {
             if constexpr (std::is_same<P, Utils::Pointer64>::value) {
-                eCtx.logger->error("Unable to handle 64bit V1 slide info.");
+                SPDLOG_LOGGER_ERROR(eCtx.logger,
+                                    "Unable to handle 64bit V1 slide info.");
             } else {
                 V1Processor(eCtx, map).run();
             }
@@ -518,7 +522,8 @@ void Converter::processSlideInfo(Utils::ExtractionContext<P> &eCtx) {
         }
         case 2: {
             if constexpr (std::is_same<P, Utils::Pointer32>::value) {
-                eCtx.logger->error("Unable to handle 32bit V2 slide info.");
+                SPDLOG_LOGGER_ERROR(eCtx.logger,
+                                    "Unable to handle 32bit V2 slide info.");
             } else {
                 V2Processor(eCtx, map).run();
             }
@@ -526,7 +531,8 @@ void Converter::processSlideInfo(Utils::ExtractionContext<P> &eCtx) {
         }
         case 3: {
             if constexpr (std::is_same<P, Utils::Pointer32>::value) {
-                eCtx.logger->error("Unable to handle 32bit V3 slide info.");
+                SPDLOG_LOGGER_ERROR(eCtx.logger,
+                                    "Unable to handle 32bit V3 slide info.");
             } else {
                 V3Processor(eCtx, map).run();
             }
@@ -534,7 +540,8 @@ void Converter::processSlideInfo(Utils::ExtractionContext<P> &eCtx) {
         }
         case 4: {
             if constexpr (std::is_same<P, Utils::Pointer64>::value) {
-                eCtx.logger->error("Unable to handle 64bit V4 slide info.");
+                SPDLOG_LOGGER_ERROR(eCtx.logger,
+                                    "Unable to handle 64bit V4 slide info.");
             } else {
                 V4Processor(eCtx, map).run();
             }

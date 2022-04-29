@@ -4,10 +4,12 @@
 
 #include <argparse/argparse.hpp>
 #include <dyld/dyld_cache_format.h>
+#include <spdlog/spdlog.h>
 
 #include <Converter/LinkeditOptimizer.h>
 #include <Converter/OffsetOptimizer.h>
 #include <Converter/Slide.h>
+#include <Converter/Stubs.h>
 #include <Dyld/Context.h>
 #include <Logger/ActivityLogger.h>
 #include <Macho/Context.h>
@@ -122,9 +124,9 @@ void extractImage(Dyld::Context &dCtx, ProgramArguments args) {
 
     // Setup context
     ActivityLogger activity("DyldEx", std::cout, true);
-    activity.logger->set_pattern("[%T:%e] [%l] %v");
+    activity.logger->set_pattern("[%T:%e %-8l %s:%#] %v");
     if (args.verbose) {
-        activity.logger->set_level(spdlog::level::debug);
+        activity.logger->set_level(spdlog::level::trace);
     } else {
         activity.logger->set_level(spdlog::level::info);
     }
@@ -136,13 +138,14 @@ void extractImage(Dyld::Context &dCtx, ProgramArguments args) {
     // Convert
     Converter::processSlideInfo(eCtx);
     Converter::optimizeLinkedit(eCtx);
+    Converter::fixStubs(eCtx);
     auto writeProcedures = Converter::optimizeOffsets<A::P>(eCtx);
 
     // Write
     std::filesystem::create_directories(args.outputPath->parent_path());
     std::ofstream outFile(*args.outputPath, std::ios_base::binary);
     if (!outFile.good()) {
-        activity.logger->error("Unable to open output file.");
+        SPDLOG_LOGGER_ERROR(activity.logger, "Unable to open output file.");
         return;
     }
 

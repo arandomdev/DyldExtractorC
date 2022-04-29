@@ -59,6 +59,12 @@ template <class P> struct nlist {};
 template <> struct nlist<Utils::Pointer32> : public ::nlist {};
 template <> struct nlist<Utils::Pointer64> : public ::nlist_64 {};
 
+struct dylib_command : public ::dylib_command {
+    constexpr static uint32_t CMDS[] = {
+        LC_ID_DYLIB,       LC_LOAD_DYLIB,        LC_LOAD_WEAK_DYLIB,
+        LC_REEXPORT_DYLIB, LC_LOAD_UPWARD_DYLIB, LC_LAZY_LOAD_DYLIB};
+};
+
 }; // namespace Loader
 }; // namespace Macho
 
