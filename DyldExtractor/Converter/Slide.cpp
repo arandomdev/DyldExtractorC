@@ -232,66 +232,80 @@ void V1Processor::run() {
     }
 }
 
-class V2Processor {
+template <class P> class V2Processor {
   public:
-    V2Processor(Utils::ExtractionContext<Utils::Pointer64> &eCtx,
+    V2Processor(Utils::ExtractionContext<P> &eCtx,
                 MappingSlideInfo &mapSlideInfo);
     void run();
 
   private:
     void processPage(uint8_t *page, uint64_t pageOffset);
 
-    Utils::ExtractionContext<Utils::Pointer64> &_eCtx;
-    Macho::Context<false, Utils::Pointer64> &_mCtx;
+    using uintptr_t = P::uint_t;
+
+    Utils::ExtractionContext<P> &_eCtx;
+    Macho::Context<false, P> &_mCtx;
     MappingSlideInfo &_mapInfo;
     dyld_cache_slide_info2 *_slideInfo;
 
-    uint64_t _deltaMask;
-    uint64_t _deltaShift;
-    uint64_t _valueMask;
-    uint64_t _valueAdd;
+    uintptr_t _deltaMask;
+    unsigned _deltaShift;
+    uintptr_t _valueMask;
+    uintptr_t _valueAdd;
 };
 
-V2Processor::V2Processor(Utils::ExtractionContext<Utils::Pointer64> &eCtx,
-                         MappingSlideInfo &mapSlideInfo)
+template <class P>
+V2Processor<P>::V2Processor(Utils::ExtractionContext<P> &eCtx,
+                            MappingSlideInfo &mapSlideInfo)
     : _eCtx(eCtx), _mCtx(eCtx.mCtx), _mapInfo(mapSlideInfo),
       _slideInfo((dyld_cache_slide_info2 *)mapSlideInfo.slideInfo) {
     assert(mapSlideInfo.slideInfoVersion == 2);
 
-    _deltaMask = _slideInfo->delta_mask;
+    _deltaMask = (uintptr_t)_slideInfo->delta_mask;
     _deltaShift = __builtin_ctzll(_deltaMask) - 2;
     _valueMask = ~_deltaMask;
-    _valueAdd = _slideInfo->value_add;
+    _valueAdd = (uintptr_t)_slideInfo->value_add;
 }
 
-void V2Processor::run() {
-    auto pageStarts =
+template <class P> void V2Processor<P>::run() {
+    const auto pageStarts =
         (uint16_t *)((uint8_t *)_slideInfo + _slideInfo->page_starts_offset);
+    const auto pageExtras =
+        (uint16_t *)((uint8_t *)_slideInfo + _slideInfo->page_extras_offset);
     auto dataStart = _mCtx.convertAddrP(_mapInfo.address);
 
-    for (auto &seg : _mCtx.segments) {
+    for (const auto &seg : _mCtx.segments) {
         if (!_mapInfo.containsAddr(seg.command->vmaddr)) {
             continue;
         }
 
         // Get relevant pages
-        auto startI =
+        const auto startI =
             (seg.command->vmaddr - _mapInfo.address) / _slideInfo->page_size;
-        auto endI = Utils::align(seg.command->vmaddr + seg.command->vmsize -
-                                     _mapInfo.address,
-                                 _slideInfo->page_size) /
-                    _slideInfo->page_size;
+        const auto endI =
+            Utils::align(seg.command->vmaddr + seg.command->vmsize -
+                             _mapInfo.address,
+                         _slideInfo->page_size) /
+            _slideInfo->page_size;
 
         for (auto i = startI; i < endI; i++) {
-            auto page = pageStarts[i];
+            const auto page = pageStarts[i];
+            auto pageData = dataStart + (i * _slideInfo->page_size);
+
             if (page == DYLD_CACHE_SLIDE_PAGE_ATTR_NO_REBASE) {
                 continue;
             } else if (page & DYLD_CACHE_SLIDE_PAGE_ATTR_EXTRA) {
-                SPDLOG_LOGGER_ERROR(_eCtx.logger,
-                                    "Unable to handle extra pages");
-                continue;
+                uint16_t chainI = page & 0x3FFF;
+                bool done = false;
+                while (!done) {
+                    uint16_t pInfo = pageExtras[chainI];
+                    uint16_t pageStartOffset = (pInfo & 0x3FFF) * 4;
+                    processPage(pageData, pageStartOffset);
+
+                    done = pInfo & DYLD_CACHE_SLIDE_PAGE_ATTR_END;
+                    chainI++;
+                }
             } else if ((page & DYLD_CACHE_SLIDE_PAGE_ATTR_EXTRA) == 0) {
-                auto pageData = dataStart + (i * _slideInfo->page_size);
                 // The page starts are 32bit jumps
                 processPage(pageData, page * 4);
             } else {
@@ -303,20 +317,21 @@ void V2Processor::run() {
     }
 }
 
-void V2Processor::processPage(uint8_t *page, uint64_t pageOffset) {
+template <class P>
+void V2Processor<P>::processPage(uint8_t *page, uint64_t pageOffset) {
     uint64_t delta = 1;
     while (delta != 0) {
         uint8_t *loc = page + pageOffset;
-        uint64_t rawValue = *((uint64_t *)loc);
+        uintptr_t rawValue = *((uintptr_t *)loc);
         delta = ((rawValue & _deltaMask) >> _deltaShift);
-        uint64_t newValue = (rawValue & _valueMask);
+        uintptr_t newValue = (rawValue & _valueMask);
         if (newValue != 0) {
             newValue += _valueAdd;
         }
 
         // Add to tracking
         _eCtx.pointerTracker->trackP(loc, newValue, nullptr);
-        *((uint64_t *)loc) = newValue;
+        *((uintptr_t *)loc) = newValue;
         pageOffset += delta;
     }
 }
@@ -521,12 +536,7 @@ void Converter::processSlideInfo(Utils::ExtractionContext<P> &eCtx) {
             break;
         }
         case 2: {
-            if constexpr (std::is_same<P, Utils::Pointer32>::value) {
-                SPDLOG_LOGGER_ERROR(eCtx.logger,
-                                    "Unable to handle 32bit V2 slide info.");
-            } else {
-                V2Processor(eCtx, map).run();
-            }
+            V2Processor<P>(eCtx, map).run();
             break;
         }
         case 3: {
