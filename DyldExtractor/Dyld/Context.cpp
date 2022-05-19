@@ -5,70 +5,57 @@
 
 using namespace Dyld;
 
-Context::Context(fs::path sharedCachePath) {
-    // Open files
-    std::optional<fs::path> cachePath;
-    if (!fs::exists(sharedCachePath)) {
-        throw std::invalid_argument("Shared cache path does not exist.");
-    } else if (!fs::is_directory(sharedCachePath)) {
-        // Assume that the file is the main cache and that
-        // there are no subcaches.
-        cachePath = sharedCachePath;
-    } else {
-        for (auto file : fs::directory_iterator(sharedCachePath)) {
-            if (file.is_directory()) {
-                continue;
-            }
-
-            // TODO: validate uuid
-            fs::path filePath = file.path();
-            if (!filePath.has_extension()) {
-                // cache assume file without extention is the main cache
-                cachePath = filePath;
-            } else if (filePath.extension() != ".map") {
-                // Filter out .map files
-                subcaches.emplace_back(filePath);
-            }
-        }
-    }
-
-    if (!cachePath) {
-        throw std::invalid_argument("Unable to find main cache file.");
-    }
-    _cachePath = cachePath.value();
-
+Context::Context(fs::path sharedCachePath, const uint8_t *subCacheUUID)
+    : _cachePath(sharedCachePath), _cacheOpen(true) {
     _cacheFile.open(_cachePath.string(), bio::mapped_file::mapmode::readonly);
-    _cacheOpen = true;
     file = (uint8_t *)_cacheFile.const_data();
 
-    // validate cache
-    if (_cacheFile.size() < sizeof(dyld_cache_header)) {
-        throw std::invalid_argument("Cache file is too small.");
-    } else if (memcmp(&"dyld", file, 4)) {
-        throw std::invalid_argument("Magic does not start with dyld.");
-    }
+    _preflightCache(subCacheUUID);
 
-    // get additional info
-    header = (dyld_cache_header *)file;
+    if (!subCacheUUID) {
+        // open subcaches if there are any
+        if (!headerContainsMember(
+                offsetof(dyld_cache_header, subCacheArrayCount))) {
+            return;
+        }
 
-    _mappings.reserve(header->mappingCount);
-    for (uint32_t i = 0; i < header->mappingCount; i++) {
-        _mappings.emplace_back(
-            (dyld_cache_mapping_info *)(file + header->mappingOffset +
-                                        (i * sizeof(dyld_cache_mapping_info))));
-    }
+        bool _usesNewerSubCacheInfo = header->cacheType == 2;
+        const std::string pathBase = sharedCachePath.string();
+        for (uint32_t i = 0; i < header->subCacheArrayCount; i++) {
+            std::string fullPath;
+            const uint8_t *subCacheUUID;
+            if (_usesNewerSubCacheInfo) {
+                auto subCacheInfo =
+                    (dyld_subcache_entry2 *)(file +
+                                             header->subCacheArrayOffset) +
+                    i;
+                subCacheUUID = subCacheInfo->uuid;
+                fullPath = pathBase + std::string(subCacheInfo->fileExtension);
+            } else {
+                auto subCacheInfo =
+                    (dyld_subcache_entry *)(file +
+                                            header->subCacheArrayOffset) +
+                    i;
+                subCacheUUID = subCacheInfo->uuid;
+                fullPath = pathBase + std::format(".{}", i + 1);
+            }
+            subcaches.emplace_back(fullPath, subCacheUUID);
+        }
 
-    bool usesNewerImages =
-        headerContainsMember(offsetof(dyld_cache_header, imagesOffset));
-    uint32_t imagesOffset =
-        usesNewerImages ? header->imagesOffset : header->imagesOffsetOld;
-    uint32_t imagesCount =
-        usesNewerImages ? header->imagesCount : header->imagesCountOld;
-    images.reserve(imagesCount);
-    for (uint32_t i = 0; i < imagesCount; i++) {
-        images.emplace_back(
-            (dyld_cache_image_info *)(file + imagesOffset +
-                                      (i * sizeof(dyld_cache_image_info))));
+        // symbols cache
+        if (headerContainsMember(offsetof(dyld_cache_header, symbolFileUUID))) {
+            // Check for null uuid
+            uint8_t summary = 0;
+            for (int i = 0; i < 16; i++) {
+                summary |= header->symbolFileUUID[i];
+            }
+            if (summary == 0) {
+                return;
+            }
+
+            subcaches.emplace_back(pathBase + ".symbols",
+                                   header->symbolFileUUID);
+        }
     }
 }
 
@@ -221,4 +208,43 @@ const Context *Context::getSymbolsCache() const {
     }
 
     return nullptr;
+}
+
+void Context::_preflightCache(const uint8_t *subCacheUUID) {
+    // validate cache
+    if (_cacheFile.size() < sizeof(dyld_cache_header)) {
+        throw std::invalid_argument("Cache file is too small.");
+    }
+
+    header = (dyld_cache_header *)file;
+
+    if (memcmp(&"dyld", header->magic, 4)) {
+        throw std::invalid_argument("Magic does not start with dyld.");
+    }
+    if (subCacheUUID) {
+        if (memcmp(subCacheUUID, header->uuid, 16) != 0) {
+            throw std::invalid_argument("Subcache UUID Mismatch.");
+        }
+    }
+
+    // get additional info
+    _mappings.reserve(header->mappingCount);
+    for (uint32_t i = 0; i < header->mappingCount; i++) {
+        _mappings.emplace_back(
+            (dyld_cache_mapping_info *)(file + header->mappingOffset +
+                                        (i * sizeof(dyld_cache_mapping_info))));
+    }
+
+    bool usesNewerImages =
+        headerContainsMember(offsetof(dyld_cache_header, imagesOffset));
+    uint32_t imagesOffset =
+        usesNewerImages ? header->imagesOffset : header->imagesOffsetOld;
+    uint32_t imagesCount =
+        usesNewerImages ? header->imagesCount : header->imagesCountOld;
+    images.reserve(imagesCount);
+    for (uint32_t i = 0; i < imagesCount; i++) {
+        images.emplace_back(
+            (dyld_cache_image_info *)(file + imagesOffset +
+                                      (i * sizeof(dyld_cache_image_info))));
+    }
 }

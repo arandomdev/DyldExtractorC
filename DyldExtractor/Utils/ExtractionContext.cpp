@@ -19,9 +19,9 @@ ExtractionContext<P>::ExtractionContext(ExtractionContext<P> &&other)
     : dCtx(other.dCtx), mCtx(other.mCtx), activity(other.activity),
       logger(other.logger), linkeditTracker(other.linkeditTracker),
       pointerTracker(other.pointerTracker), symbolizer(other.symbolizer),
-      hasRedactedIndirect(other.hasRedactedIndirect) {
+      redactedIndirectCount(other.redactedIndirectCount) {
     other.activity = nullptr;
-    other.hasRedactedIndirect = false;
+    other.redactedIndirectCount = 0;
     other.linkeditTracker = nullptr;
     other.pointerTracker = nullptr;
     other.symbolizer = nullptr;
@@ -43,8 +43,8 @@ ExtractionContext<P>::operator=(ExtractionContext<P> &&other) {
     other.pointerTracker = nullptr;
     other.symbolizer = nullptr;
 
-    this->hasRedactedIndirect = other.hasRedactedIndirect;
-    other.hasRedactedIndirect = false;
+    this->redactedIndirectCount = other.redactedIndirectCount;
+    other.redactedIndirectCount = 0;
     return *this;
 }
 

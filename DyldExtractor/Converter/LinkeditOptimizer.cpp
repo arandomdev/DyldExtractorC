@@ -62,7 +62,7 @@ template <class P>
 bool LinkeditTracker<P>::insertLinkeditData(std::optional<LinkeditData> after,
                                             LinkeditData data) {
     // calculate shift amount with pointer align
-    uint32_t shiftDelta = data.dataSize + (8 - (data.dataSize % 8));
+    uint32_t shiftDelta = Utils::align(data.dataSize, 8);
 
     // Check that there is enough space
     uint8_t *lastDataEnd;
@@ -100,6 +100,53 @@ bool LinkeditTracker<P>::insertLinkeditData(std::optional<LinkeditData> after,
     return true;
 }
 
+template <class P>
+bool LinkeditTracker<P>::resizeLinkeditData(LinkeditData &data,
+                                            uint32_t newSize) {
+    int32_t shiftDelta =
+        Utils::align(newSize, 8) - Utils::align(data.dataSize, 8);
+
+    // Check if there is enough space
+    uint8_t *lastDataEnd;
+    if (trackingData.size()) {
+        auto lastData = *trackingData.rbegin();
+        lastDataEnd = lastData.data + lastData.dataSize;
+    } else {
+        lastDataEnd = _linkeditStart;
+    }
+    if (lastDataEnd + shiftDelta > _linkeditEnd) {
+        return false;
+    }
+
+    // Check if we need to shift any data
+    for (int i = 0; i < trackingData.size(); i++) {
+        auto shiftStartData = trackingData[i];
+        if (shiftStartData.data > data.data &&
+            shiftStartData.data < data.data + data.dataSize + shiftDelta) {
+            // shift data
+            uint8_t *shiftStart = shiftStartData.data;
+            memmove(shiftStart + shiftDelta, shiftStart,
+                    lastDataEnd - shiftStart);
+
+            // Update tracking data
+            for (auto &trackedData : trackingData) {
+                if (trackedData.data >= shiftStart) {
+                    *(uint32_t *)trackedData.offset += shiftDelta;
+                    trackedData.data += shiftDelta;
+                }
+            }
+        }
+    }
+
+    // Zero out if extended
+    if (shiftDelta > 0) {
+        memset(data.data + data.dataSize, 0x0, shiftDelta);
+    }
+
+    data.dataSize = newSize;
+    return true;
+}
+
 template <class P> void LinkeditTracker<P>::trackData(LinkeditData data) {
     auto it =
         std::lower_bound(trackingData.begin(), trackingData.end(), data,
@@ -107,6 +154,17 @@ template <class P> void LinkeditTracker<P>::trackData(LinkeditData data) {
                              return a.data < b.data;
                          });
     trackingData.insert(it, data);
+}
+
+template <class P>
+LinkeditData *LinkeditTracker<P>::getLinkeditData(uint8_t *offset) {
+    for (auto &data : trackingData) {
+        if (data.offset == offset) {
+            return &data;
+        }
+    }
+
+    return nullptr;
 }
 
 template class LinkeditTracker<Utils::Pointer32>;
@@ -382,7 +440,7 @@ void LinkeditOptimizer<P>::searchRedactedSymbol(uint8_t *newLinkedit,
         symbolEntry->n_type = 1;
 
         offset += sizeof(Macho::Loader::nlist<P>);
-        _eCtx.hasRedactedIndirect = true;
+        _eCtx.redactedIndirectCount = _redactedSymbolsCount;
     }
 }
 
@@ -573,9 +631,11 @@ void LinkeditOptimizer<P>::copyIndirectSymbolTable(uint8_t *newLinkedit,
          entryIndex++) {
         uint32_t *entry = entries + entryIndex;
         if (*entry == INDIRECT_SYMBOL_ABS || *entry == INDIRECT_SYMBOL_LOCAL ||
+            *entry == (INDIRECT_SYMBOL_ABS | INDIRECT_SYMBOL_LOCAL) ||
             *entry == 0) {
             // just copy entry
             *(newEntries + entryIndex) = *entry;
+            continue;
         }
 
         *(newEntries + entryIndex) = _newSymbolIndicies[*entry];

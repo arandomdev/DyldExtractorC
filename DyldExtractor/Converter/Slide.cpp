@@ -78,8 +78,8 @@ Converter::getMappingSlideInfo(const Utils::ExtractionContext<P> &eCtx) {
 }
 
 template <class P>
-void TrackedPointer<P>::setTarget(const typename P::uint_t target) {
-    *(typename P::uint_t *)loc = target;
+void TrackedPointer<P>::setTarget(const typename P::ptr_t target) {
+    *(typename P::ptr_t *)loc = target;
 }
 
 template <class P>
@@ -95,40 +95,40 @@ PointerTracker<P>::PointerTracker(const Utils::ExtractionContext<P> &eCtx)
     : _dCtx(eCtx.dCtx), _mappings(getMappingSlideInfo(eCtx)) {}
 
 template <class P>
-P::uint_t PointerTracker<P>::slideP(const uint64_t address) const {
+P::ptr_t PointerTracker<P>::slideP(const uint64_t address) const {
     auto ptr = _dCtx.convertAddrP(address);
     for (auto &map : _mappings) {
         if (!map.containsAddr(address)) {
-            return 0;
+            continue;
         }
 
         switch (map.slideInfoVersion) {
         case 1: {
-            return *(uint_t *)ptr;
+            return *(ptr_t *)ptr;
             break;
         }
         case 2: {
-            return *(uint_t *)ptr & 0xffffffffff;
+            return *(ptr_t *)ptr & 0xffffffffff;
             break;
         }
         case 3: {
             auto ptrInfo = (dyld_cache_slide_pointer3 *)ptr;
             if (ptrInfo->auth.authenticated) {
                 auto slideInfo = (dyld_cache_slide_info3 *)map.slideInfo;
-                return (uint_t)ptrInfo->auth.offsetFromSharedCacheBase +
-                       (uint_t)slideInfo->auth_value_add;
+                return (ptr_t)ptrInfo->auth.offsetFromSharedCacheBase +
+                       (ptr_t)slideInfo->auth_value_add;
             } else {
                 uint64_t value51 = ptrInfo->plain.pointerValue;
                 uint64_t top8Bits = value51 & 0x0007F80000000000ULL;
                 uint64_t bottom43Bits = value51 & 0x000007FFFFFFFFFFULL;
-                return (uint_t)(top8Bits << 13) | (uint_t)bottom43Bits;
+                return (ptr_t)(top8Bits << 13) | (ptr_t)bottom43Bits;
             }
             break;
         }
         case 4: {
             auto slideInfo = (dyld_cache_slide_info4 *)map.slideInfo;
             auto newValue = *(uint32_t *)ptr & ~(slideInfo->delta_mask);
-            return (uint_t)newValue + (uint_t)slideInfo->value_add;
+            return (ptr_t)newValue + (ptr_t)slideInfo->value_add;
             break;
         }
         default:
@@ -142,7 +142,7 @@ P::uint_t PointerTracker<P>::slideP(const uint64_t address) const {
 
 template <class P>
 TrackedPointer<P> &PointerTracker<P>::trackP(uint8_t *loc,
-                                             const typename P::uint_t target,
+                                             const typename P::ptr_t target,
                                              const uint8_t *authSource) {
     if (_pointers.contains(loc)) {
         return _pointers[loc];
@@ -165,7 +165,7 @@ TrackedPointer<P> &PointerTracker<P>::trackP(uint8_t *loc,
         }
     }
 
-    // return a refernce to the pointer in the map
+    // return a reference to the pointer in the map
     // TrackedPointer<P> ptr = {loc, target, false, {diversity, hasAddrDiv,
     // key}};
     _pointers[loc] = {loc, target, false, {diversity, hasAddrDiv, key}};
@@ -241,7 +241,7 @@ template <class P> class V2Processor {
   private:
     void processPage(uint8_t *page, uint64_t pageOffset);
 
-    using uintptr_t = P::uint_t;
+    using uintptr_t = P::ptr_t;
 
     Utils::ExtractionContext<P> &_eCtx;
     Macho::Context<false, P> &_mCtx;

@@ -1,6 +1,7 @@
 #ifndef __CONVERTER_STUBS__
 #define __CONVERTER_STUBS__
 
+#include <Utils/Accelerator.h>
 #include <Utils/ExtractionContext.h>
 #include <map>
 #include <set>
@@ -39,7 +40,8 @@ struct SymbolicSet {
         bool operator<(const Symbol &rhs) const;
     };
 
-    // Symbols in the set, the last element is the most preferred.
+    /// Symbols in the set, the last element is the most preferred. Should
+    /// never be empty.
     std::set<Symbol> symbols;
 
     /// Add a symbol to the set
@@ -59,8 +61,11 @@ template <class P> class Symbolizer {
     Symbolizer(const Utils::ExtractionContext<P> &eCtx);
 
     void enumerate();
+    const SymbolicSet *symbolizeAddr(uint64_t addr) const;
 
   private:
+    friend class Utils::Accelerator<P>;
+
     /// Enumerate mCtx's symbols, I don't think this is too helpful though...
     void _enumerateSymbols();
     void _enumerateExports();
@@ -93,26 +98,26 @@ template <class P> class Symbolizer {
     using _EntryMapT =
         std::unordered_multiset<_ExportEntry, decltype(_entryHash),
                                 decltype(_entryEqual)>;
-    using _PathToImagesT =
-        std::map<std::string_view, const dyld_cache_image_info *>;
-    using _ImagesProcessedT = std::map<std::string_view, _EntryMapT>;
+    using _PathToImagesT = std::map<std::string, const dyld_cache_image_info *>;
+    using _ImagesProcessedT = std::map<std::string, _EntryMapT>;
 
     _EntryMapT &_processDylibCmd(const Macho::Loader::dylib_command *dylibCmd,
                                  const _PathToImagesT &pathToImages,
                                  _ImagesProcessedT &imagesProcessed) const;
     std::vector<ExportInfoTrie::Entry>
-    _readExports(const std::string_view &dylibPath,
+    _readExports(const std::string &dylibPath,
                  const Macho::Context<true, P> &dylibCtx) const;
 
     const Utils::ExtractionContext<P> &_eCtx;
     const Dyld::Context &_dCtx;
     Macho::Context<false, P> &_mCtx;
     std::shared_ptr<spdlog::logger> _logger;
+    Utils::Accelerator<P> *_accelerator;
 
     std::map<uint64_t, SymbolicSet> _symbols;
 };
 
-template <class P> void fixStubs(Utils::ExtractionContext<P> &eCtx);
+template <class A> void fixStubs(Utils::ExtractionContext<typename A::P> &eCtx);
 
 } // namespace Converter
 

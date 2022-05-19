@@ -1,7 +1,6 @@
 #include "ActivityLogger.h"
 
 #include <exception>
-#include <fmt/format.h>
 
 _LoggerStreamBuffer::_LoggerStreamBuffer(std::streambuf *buffer)
     : _buffer(buffer) {}
@@ -34,7 +33,7 @@ ActivityLogger::ActivityLogger(std::string name, std::ostream &output,
             std::make_shared<spdlog::sinks::ostream_sink_st>(_loggerStream);
 
         // preload activity
-        _updateActivity(true);
+        update(_currentModule, _currentMessage, true);
     } else {
         streamSink = std::make_shared<spdlog::sinks::ostream_sink_st>(output);
     }
@@ -43,33 +42,59 @@ ActivityLogger::ActivityLogger(std::string name, std::ostream &output,
 }
 
 void ActivityLogger::update(std::optional<std::string> moduleName,
-                            std::optional<std::string> message) {
+                            std::optional<std::string> message,
+                            bool fullUpdate) {
     if (!_enableActivity) {
         return;
     }
 
-    bool textChanged = false;
-    if (moduleName) {
-        _currentModule = moduleName.value();
-        textChanged = true;
-    }
-    if (message) {
-        _currentMessage = message.value();
-        textChanged = true;
-    }
+    // Format, [(/) Elapsed Time] Module - Text
+    unsigned int updateLevel = fullUpdate ? INT_MAX : 0;
 
-    if (textChanged) {
-        _updateActivity(true);
-        return;
-    }
-
-    // only update the activity occasionally
+    // Spinner
     auto currentTime = std::chrono::high_resolution_clock::now();
     if (std::chrono::duration_cast<std::chrono::milliseconds>(
             currentTime - _lastActivityUpdate)
             .count() > 150) {
         _lastActivityUpdate = currentTime;
-        _updateActivity(false);
+        _currentActivityState =
+            (_currentActivityState + 1) % _activityStates.size();
+        updateLevel |= 0b1;
+    }
+
+    // elapsed time
+    auto elapsedTime = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::high_resolution_clock::now() - _startTime);
+    if (elapsedTime != _lastElapsedTime) {
+        _lastElapsedTime = elapsedTime;
+        updateLevel |= 0b10;
+    }
+
+    // text
+    if (moduleName) {
+        _currentModule = moduleName.value();
+        updateLevel |= 0b100;
+    }
+    if (message) {
+        _currentMessage = message.value();
+        updateLevel |= 0b100;
+    }
+
+    // Update
+    std::string output;
+    if (updateLevel >= 0b100) {
+        output = std::format(
+            "\033[2K[({}) {}] {} - {}", _activityStates[_currentActivityState],
+            _formatTime(elapsedTime), _currentModule, _currentMessage);
+    } else if (updateLevel >= 0b10) {
+        output = std::format("[({}) {}", _activityStates[_currentActivityState],
+                             _formatTime(elapsedTime));
+    } else if (updateLevel >= 0b1) {
+        output = std::format("[({}", _activityStates[_currentActivityState]);
+    }
+
+    if (output.length()) {
+        _activityStream << output + "\r" << std::flush;
     }
 }
 
@@ -80,40 +105,11 @@ void ActivityLogger::stopActivity() {
     }
 }
 
-void ActivityLogger::_updateActivity(bool fullRefesh) {
-    // Format, [(/) Elapsed Time] Module - Text
-    std::string output;
-    auto elapsedTime = std::chrono::duration_cast<std::chrono::seconds>(
-        std::chrono::high_resolution_clock::now() - _startTime);
-
-    if (fullRefesh) {
-        // just update the text
-        output = fmt::format("\033[2K[({}) {}] {} - {}\r",
-                             _activityStates[_currentActivityState],
-                             _formatTime(elapsedTime), _currentModule,
-                             _currentMessage);
-        _lastElapsedTime = elapsedTime;
-        _activityStream << output;
-        return;
-    }
-
-    // update the spinner
-    _currentActivityState =
-        (_currentActivityState + 1) % _activityStates.size();
-    output = fmt::format("[({}", _activityStates[_currentActivityState]);
-
-    // update the elapsed time if needed
-    if (elapsedTime != _lastElapsedTime) {
-        output += ") " + _formatTime(elapsedTime);
-        _lastElapsedTime = elapsedTime;
-    }
-
-    _activityStream << output + "\r" << std::flush;
-}
+std::ostream &ActivityLogger::loggerStream() { return _loggerStream; }
 
 std::string ActivityLogger::_formatTime(std::chrono::seconds seconds) {
     auto minutes = std::chrono::duration_cast<std::chrono::minutes>(seconds);
     seconds -= minutes;
 
-    return fmt::format("{:02d}:{:02d}", minutes.count(), seconds.count());
+    return std::format("{:02d}:{:02d}", minutes.count(), seconds.count());
 }

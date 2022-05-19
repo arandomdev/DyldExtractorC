@@ -25,7 +25,6 @@ include_directories (${Boost_INCLUDE_DIRS})
 add_compile_definitions(SPDLOG_ACTIVE_LEVEL=0) # Allow all logging, define at runtime
 include_directories ("External/headers")
 add_subdirectory ("External/spdlog")
-add_subdirectory ("External/fmt")
 add_subdirectory ("External/argparse")
 
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)

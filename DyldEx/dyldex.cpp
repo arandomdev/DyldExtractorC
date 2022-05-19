@@ -3,7 +3,6 @@
 #include <iostream>
 
 #include <argparse/argparse.hpp>
-#include <dyld/dyld_cache_format.h>
 #include <spdlog/spdlog.h>
 
 #include <Converter/LinkeditOptimizer.h>
@@ -27,7 +26,7 @@ struct ProgramArguments {
 };
 
 ProgramArguments parseArgs(int argc, char *argv[]) {
-    argparse::ArgumentParser program("DyldEx");
+    argparse::ArgumentParser program("dyldex");
 
     // TODO: specify main cache
     program.add_argument("cache_path")
@@ -138,11 +137,11 @@ void extractImage(Dyld::Context &dCtx, ProgramArguments args) {
     // Convert
     Converter::processSlideInfo(eCtx);
     Converter::optimizeLinkedit(eCtx);
-    Converter::fixStubs(eCtx);
-    auto writeProcedures = Converter::optimizeOffsets<A::P>(eCtx);
+    Converter::fixStubs<A>(eCtx);
+    auto writeProcedures = Converter::optimizeOffsets(eCtx);
 
     // Write
-    std::filesystem::create_directories(args.outputPath->parent_path());
+    fs::create_directories(args.outputPath->parent_path());
     std::ofstream outFile(*args.outputPath, std::ios_base::binary);
     if (!outFile.good()) {
         SPDLOG_LOGGER_ERROR(activity.logger, "Unable to open output file.");

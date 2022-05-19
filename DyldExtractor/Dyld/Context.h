@@ -19,7 +19,7 @@ class Context {
     std::vector<const dyld_cache_image_info *> images;
     std::vector<Context> subcaches;
 
-    Context(fs::path sharedCachePath);
+    Context(fs::path sharedCachePath, const uint8_t *subCacheUUID = nullptr);
     ~Context();
     Context(const Context &other) = delete;
     Context(Context &&other);
@@ -68,6 +68,8 @@ class Context {
     bool _cacheOpen = false;
 
     std::vector<const dyld_cache_mapping_info *> _mappings;
+
+    void _preflightCache(const uint8_t *subCacheUUID = nullptr);
 };
 
 }; // namespace Dyld

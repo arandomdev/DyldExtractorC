@@ -7,6 +7,7 @@ add_library (DyldExtractor
 	Converter/Stubs.cpp
 	Logger/ActivityLogger.cpp
 	Dyld/Context.cpp
+	Macho/BindInfo.cpp
 	Macho/Context.cpp
 	Utils/ExtractionContext.cpp
 )
@@ -17,4 +18,3 @@ target_include_directories (DyldExtractor PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories (DyldExtractor PUBLIC .)
 
 target_link_libraries (DyldExtractor PRIVATE spdlog::spdlog)
-target_link_libraries (DyldExtractor PRIVATE fmt::fmt)

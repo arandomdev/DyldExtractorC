@@ -37,12 +37,26 @@ template <class P> class LinkeditTracker {
     bool insertLinkeditData(std::optional<LinkeditData> after,
                             LinkeditData data);
 
+    /// Resize a data region
+    ///
+    /// @param data The data region to resize.
+    /// @param newSize The new size of the region.
+    /// @returns If the operation was successful, if there was enough space.
+    bool resizeLinkeditData(LinkeditData &data, uint32_t newSize);
+
     /// Add data already in the linkedit to tracking.
     ///
     /// @param data The data to track.
     void trackData(LinkeditData data);
 
-    // Data that is being tracked, is ordered based on the location of the data.
+    /// Get a LinkeditData by the tracking offset
+    ///
+    /// @param offset The tracked offset to search by
+    /// @returns A reference to the LinkeditData
+    LinkeditData *getLinkeditData(uint8_t *offset);
+
+    // Data that is being tracked, is ordered based on the location of the
+    // data.
     std::vector<LinkeditData> trackingData;
 
   private:

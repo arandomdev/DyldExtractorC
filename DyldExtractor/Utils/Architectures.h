@@ -7,18 +7,12 @@ namespace Utils {
 
 class Pointer32 {
   public:
-    typedef uint32_t uint_t;
-
-    static uint64_t getP(const uint_t &from) { return from; }
-    static void setP(uint_t &into, uint64_t value) { into = (uint_t)value; }
+    using ptr_t = uint32_t;
 };
 
 class Pointer64 {
   public:
-    typedef uint64_t uint_t;
-
-    static uint64_t getP(const uint_t &from) { return from; }
-    static void setP(uint_t &into, uint64_t value) { into = (uint_t)value; }
+    using ptr_t = uint64_t;
 };
 
 /// Align n up to a stride k

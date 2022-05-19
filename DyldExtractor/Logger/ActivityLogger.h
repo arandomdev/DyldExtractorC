@@ -42,10 +42,15 @@ class ActivityLogger {
     /// @param module The name of the module.
     /// @param message The message.
     void update(std::optional<std::string> moduleName = std::nullopt,
-                std::optional<std::string> message = std::nullopt);
+                std::optional<std::string> message = std::nullopt,
+                bool fullUpdate = false);
 
     /// Stop the activity indicator
     void stopActivity();
+
+    /// Get the logger stream that won't interfere with
+    /// the activity indicator.
+    std::ostream &loggerStream();
 
   private:
     std::ostream &_activityStream;
@@ -64,7 +69,6 @@ class ActivityLogger {
     const std::chrono::time_point<std::chrono::high_resolution_clock>
         _startTime;
 
-    void _updateActivity(bool fullRefresh);
     std::string _formatTime(std::chrono::seconds seconds);
 };
 

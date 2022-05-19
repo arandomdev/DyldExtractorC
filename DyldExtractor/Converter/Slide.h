@@ -23,8 +23,8 @@ std::vector<MappingSlideInfo>
 getMappingSlideInfo(const Utils::ExtractionContext<P> &eCtx);
 
 template <class P> struct TrackedPointer {
-    uint8_t *loc;     // Pointer to pointer in the mCtx
-    P::uint_t target; // The target VM address
+    uint8_t *loc;    // Pointer to pointer in the mCtx
+    P::ptr_t target; // The target VM address
     bool isBind;
 
     struct {
@@ -33,13 +33,13 @@ template <class P> struct TrackedPointer {
         uint8_t key;
     } auth;
 
-    void setTarget(const typename P::uint_t target);
+    void setTarget(const typename P::ptr_t target);
     bool operator<(const TrackedPointer &other);
 };
 
 template <class P> class PointerTracker {
   private:
-    typedef P::uint_t uint_t;
+    typedef P::ptr_t ptr_t;
 
   public:
     PointerTracker(const Utils::ExtractionContext<P> &eCtx);
@@ -48,7 +48,7 @@ template <class P> class PointerTracker {
     ///
     /// @param address The address of the pointer.
     /// @returns The slid pointer value.
-    uint_t slideP(const uint64_t address) const;
+    ptr_t slideP(const uint64_t address) const;
 
     /// Slide the struct at the address.
     ///
@@ -58,7 +58,7 @@ template <class P> class PointerTracker {
     template <class T> T slideS(const uint64_t address) const {
         T data = *(T *)_dCtx.convertAddrP(address);
         for (auto const offset : T::PTRS::P) {
-            *(uint_t *)((uint8_t *)&data + offset) = slideP(address + offset);
+            *(ptr_t *)((uint8_t *)&data + offset) = slideP(address + offset);
         }
         return data;
     }
@@ -68,7 +68,7 @@ template <class P> class PointerTracker {
     /// @param loc A pointer to the pointer in the mCtx.
     /// @param target The target vm address.
     /// @param authSource The address of the pointer for auth info.
-    TrackedPointer<P> &trackP(uint8_t *loc, const uint_t target,
+    TrackedPointer<P> &trackP(uint8_t *loc, const ptr_t target,
                               const uint8_t *authSource);
 
   private:

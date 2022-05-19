@@ -14,6 +14,7 @@ template <class P> class Symbolizer;
 }; // namespace Converter
 
 namespace Utils {
+template <class P> class Accelerator;
 
 template <class P> class ExtractionContext {
   public:
@@ -26,13 +27,17 @@ template <class P> class ExtractionContext {
     Converter::PointerTracker<P> *pointerTracker = nullptr;
     Converter::Symbolizer<P> *symbolizer = nullptr;
 
-    /// If this variable is true, the following is true,
+    /// Accelerator cache when running multiple images.
+    /// Is not destroyed in deconstructor.
+    Accelerator<P> *accelerator = nullptr;
+
+    /// If this variable is non zero, the following is true,
     /// * There are redacted indirect symbol entries.
     /// * Space was allocated for the redacted symbol entries.
     ///     * This space is placed at the end of the symbol table.
     /// * The string table to at the end of the LINKEDIT segment.
     ///
-    bool hasRedactedIndirect = false;
+    uint32_t redactedIndirectCount = 0;
 
     ExtractionContext(Dyld::Context &dCtx, Macho::Context<false, P> &mCtx,
                       ActivityLogger *activity);

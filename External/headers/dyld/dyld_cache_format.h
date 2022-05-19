@@ -499,6 +499,12 @@ struct dyld_subcache_entry
     uint64_t    cacheVMOffset;      // The offset of this subcache from the main cache base address
 };
 
+struct dyld_subcache_entry2
+{
+    uint8_t     uuid[16];           // The UUID of the subCache file
+    uint64_t    cacheVMOffset;      // The offset of this subcache from the main cache base address
+    char        fileExtension[32];  // File extension of the subcache
+};
 
 // This is the  location of the macOS shared cache on macOS 11.0 and later
 #define MACOSX_MRM_DYLD_SHARED_CACHE_DIR   "/System/Library/dyld/"
