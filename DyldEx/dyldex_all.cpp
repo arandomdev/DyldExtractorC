@@ -22,6 +22,7 @@ struct ProgramArguments {
     std::optional<fs::path> outputDir;
     bool verbose;
     bool disableOutput;
+    bool disableActivity;
 
     union {
         uint32_t _raw;
@@ -30,6 +31,9 @@ struct ProgramArguments {
                 unused : 29;
         };
     } modulesDisabled;
+
+    int startIndex;
+    int endIndex;
 };
 
 ProgramArguments parseArgs(int argc, char *argv[]) {
@@ -54,12 +58,27 @@ ProgramArguments parseArgs(int argc, char *argv[]) {
         .default_value(false)
         .implicit_value(true);
 
+    program.add_argument("-a", "--disable-activity")
+        .help("Disable the activity indicator.")
+        .default_value(false)
+        .implicit_value(true);
+
     program.add_argument("-s", "--skip-modules")
         .help("Skip certain modules. Most modules depend on each other, so use "
               "with caution. Useful for development. 1=processSlideInfo, "
               "2=optimizeLinkedit, 4=fixStubs")
         .scan<'d', int>()
         .default_value(0);
+
+    program.add_argument("-i", "--start")
+        .help("The index of the image to start at (inclusive).")
+        .scan<'d', int>()
+        .default_value(0);
+
+    program.add_argument("-I", "--end")
+        .help("The index of the image to end at (exclusive).")
+        .scan<'d', int>()
+        .default_value(-1);
 
     ProgramArguments args;
     try {
@@ -69,7 +88,10 @@ ProgramArguments parseArgs(int argc, char *argv[]) {
         args.outputDir = program.present<std::string>("--output-dir");
         args.verbose = program.get<bool>("--verbose");
         args.disableOutput = program.get<bool>("--disable-output");
+        args.disableActivity = program.get<bool>("--disable-activity");
         args.modulesDisabled._raw = program.get<int>("--skip-modules");
+        args.startIndex = program.get<int>("--start");
+        args.endIndex = program.get<int>("--end");
 
     } catch (const std::runtime_error &err) {
         std::cerr << "Argument parsing error: " << err.what() << std::endl;
@@ -79,6 +101,9 @@ ProgramArguments parseArgs(int argc, char *argv[]) {
     if (!args.disableOutput && !args.outputDir) {
         std::cerr << "Output directory is required for extraction" << std::endl;
         std::exit(1);
+    }
+    if (args.endIndex < 0) {
+        args.endIndex = INT_MAX;
     }
 
     return args;
@@ -98,8 +123,6 @@ void runImage(Dyld::Context &dCtx,
     } else {
         activity.logger->set_level(spdlog::level::info);
     }
-
-    logStream << std::format("Running {}", imageName) << std::endl;
 
     auto mCtx = dCtx.createMachoCtx<false, A::P>(imageInfo);
     Utils::ExtractionContext<A::P> eCtx(dCtx, mCtx, &activity);
@@ -133,13 +156,11 @@ void runImage(Dyld::Context &dCtx,
         }
         outFile.close();
     }
-
-    logStream << std::endl;
 }
 
 template <class A>
 void runAllImages(Dyld::Context &dCtx, ProgramArguments &args) {
-    ActivityLogger activity("DyldEx_All", std::cout, true);
+    ActivityLogger activity("DyldEx_All", std::cout, !args.disableActivity);
     activity.logger->set_pattern("[%T:%e %-8l %s:%#] %v");
     if (args.verbose) {
         activity.logger->set_level(spdlog::level::trace);
@@ -147,22 +168,45 @@ void runAllImages(Dyld::Context &dCtx, ProgramArguments &args) {
         activity.logger->set_level(spdlog::level::info);
     }
     activity.update("DyldEx All", "Starting up");
+    int imagesProcessed = 0;
+    std::ostringstream summaryStream;
 
     Utils::Accelerator<typename A::P> accelerator;
 
-    const auto imageCount = dCtx.images.size();
-    for (int i = 0; i < imageCount; i++) {
+    const int startIndex = std::max(args.startIndex, 0);
+    const int endIndex = std::min(args.endIndex, (int)dCtx.images.size());
+    const int numberOfImages = endIndex - startIndex;
+    for (int i = startIndex; i < endIndex; i++) {
         const auto imageInfo = dCtx.images[i];
-
         std::string imagePath((char *)(dCtx.file + imageInfo->pathFileOffset));
         std::string imageName = imagePath.substr(imagePath.rfind("/") + 1);
 
-        activity.update(std::nullopt, std::format("[{:4}/{}] {}", i + 1,
-                                                  imageCount, imageName));
+        imagesProcessed++;
+        activity.update(std::nullopt,
+                        std::format("[{:4}/{}] {}", imagesProcessed,
+                                    numberOfImages, imageName));
 
+        std::ostringstream loggerStream;
         runImage<A>(dCtx, &accelerator, imageInfo, imagePath, imageName, args,
-                    activity.loggerStream());
+                    loggerStream);
+
+        // update summary and UI.
+        auto logs = loggerStream.str();
+        activity.loggerStream()
+            << std::format("processed {}", imageName) << std::endl
+            << logs << std::endl;
+        if (logs.length()) {
+            summaryStream << "* " << imageName << std::endl
+                          << logs << std::endl;
+        }
     }
+
+    activity.update(std::nullopt, "Done");
+    activity.stopActivity();
+    activity.loggerStream()
+        << std::endl
+        << "==== Summary ====" << std::endl
+        << summaryStream.str() << "=================" << std::endl;
 }
 
 int main(int argc, char *argv[]) {
