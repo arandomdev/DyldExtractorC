@@ -4,6 +4,6 @@
 [submodule "External/argparse"]
 	path = External/argparse
 	url = https://github.com/p-ranav/argparse.git
-[submodule "External/googletest"]
-	path = External/googletest
-	url = https://github.com/google/googletest.git
+[submodule "External/fmt"]
+	path = External/fmt
+	url = https://github.com/fmtlib/fmt.git

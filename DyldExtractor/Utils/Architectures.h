@@ -35,19 +35,19 @@ template <class T1, class T2> inline T1 align(T1 n, T2 k) {
 namespace Arch {
 
 struct x86_64 {
-    typedef Pointer64 P;
+    using P = Pointer64;
 };
 
 struct arm {
-    typedef Pointer32 P;
+    using P = Pointer32;
 };
 
 struct arm64 {
-    typedef Pointer64 P;
+    using P = Pointer64;
 };
 
 struct arm64_32 {
-    typedef Pointer32 P;
+    using P = Pointer32;
 };
 
 } // namespace Arch

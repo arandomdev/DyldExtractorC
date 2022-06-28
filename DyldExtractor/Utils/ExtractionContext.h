@@ -40,7 +40,7 @@ template <class P> class ExtractionContext {
     uint32_t redactedIndirectCount = 0;
 
     ExtractionContext(Dyld::Context &dCtx, Macho::Context<false, P> &mCtx,
-                      ActivityLogger *activity);
+                      ActivityLogger *activity, Accelerator<P> *accelerator);
     ExtractionContext(const ExtractionContext<P> &other) = delete;
     ExtractionContext(ExtractionContext<P> &&other);
     ExtractionContext &operator=(const ExtractionContext<P> &other) = delete;

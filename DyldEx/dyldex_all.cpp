@@ -17,12 +17,12 @@
 
 namespace fs = std::filesystem;
 
+#pragma region Arguments
 struct ProgramArguments {
     fs::path cache_path;
     std::optional<fs::path> outputDir;
     bool verbose;
     bool disableOutput;
-    bool disableActivity;
 
     union {
         uint32_t _raw;
@@ -31,35 +31,26 @@ struct ProgramArguments {
                 unused : 29;
         };
     } modulesDisabled;
-
-    int startIndex;
-    int endIndex;
 };
 
 ProgramArguments parseArgs(int argc, char *argv[]) {
     argparse::ArgumentParser program("dyldex_all");
 
-    // TODO: specify main cache
     program.add_argument("cache_path")
         .help("The path to the shared cache. If there are subcaches, give the "
-              "directory.");
+              "main one (typically without the file extension).");
 
     program.add_argument("-o", "--output-dir")
         .help("The output directory for the extracted images. Required for "
               "extraction");
 
-    program.add_argument("-V", "--verbose")
+    program.add_argument("-v", "--verbose")
         .help("Enables debug logging messages.")
         .default_value(false)
         .implicit_value(true);
 
     program.add_argument("-d", "--disable-output")
         .help("Disables writing output. Useful for development.")
-        .default_value(false)
-        .implicit_value(true);
-
-    program.add_argument("-a", "--disable-activity")
-        .help("Disable the activity indicator.")
         .default_value(false)
         .implicit_value(true);
 
@@ -70,16 +61,6 @@ ProgramArguments parseArgs(int argc, char *argv[]) {
         .scan<'d', int>()
         .default_value(0);
 
-    program.add_argument("-i", "--start")
-        .help("The index of the image to start at (inclusive).")
-        .scan<'d', int>()
-        .default_value(0);
-
-    program.add_argument("-I", "--end")
-        .help("The index of the image to end at (exclusive).")
-        .scan<'d', int>()
-        .default_value(-1);
-
     ProgramArguments args;
     try {
         program.parse_args(argc, argv);
@@ -88,10 +69,7 @@ ProgramArguments parseArgs(int argc, char *argv[]) {
         args.outputDir = program.present<std::string>("--output-dir");
         args.verbose = program.get<bool>("--verbose");
         args.disableOutput = program.get<bool>("--disable-output");
-        args.disableActivity = program.get<bool>("--disable-activity");
         args.modulesDisabled._raw = program.get<int>("--skip-modules");
-        args.startIndex = program.get<int>("--start");
-        args.endIndex = program.get<int>("--end");
 
     } catch (const std::runtime_error &err) {
         std::cerr << "Argument parsing error: " << err.what() << std::endl;
@@ -102,12 +80,10 @@ ProgramArguments parseArgs(int argc, char *argv[]) {
         std::cerr << "Output directory is required for extraction" << std::endl;
         std::exit(1);
     }
-    if (args.endIndex < 0) {
-        args.endIndex = INT_MAX;
-    }
 
     return args;
 }
+#pragma endregion Arguments
 
 template <class A>
 void runImage(Dyld::Context &dCtx,
@@ -124,9 +100,9 @@ void runImage(Dyld::Context &dCtx,
         activity.logger->set_level(spdlog::level::info);
     }
 
-    auto mCtx = dCtx.createMachoCtx<false, A::P>(imageInfo);
-    Utils::ExtractionContext<A::P> eCtx(dCtx, mCtx, &activity);
-    eCtx.accelerator = accelerator;
+    auto mCtx = dCtx.createMachoCtx<false, typename A::P>(imageInfo);
+    Utils::ExtractionContext<typename A::P> eCtx(dCtx, mCtx, &activity,
+                                                 accelerator);
 
     if (!args.modulesDisabled.processSlideInfo) {
         Converter::processSlideInfo(eCtx);
@@ -160,7 +136,7 @@ void runImage(Dyld::Context &dCtx,
 
 template <class A>
 void runAllImages(Dyld::Context &dCtx, ProgramArguments &args) {
-    ActivityLogger activity("DyldEx_All", std::cout, !args.disableActivity);
+    ActivityLogger activity("DyldEx_All", std::cout, true);
     activity.logger->set_pattern("[%T:%e %-8l %s:%#] %v");
     if (args.verbose) {
         activity.logger->set_level(spdlog::level::trace);
@@ -173,17 +149,15 @@ void runAllImages(Dyld::Context &dCtx, ProgramArguments &args) {
 
     Utils::Accelerator<typename A::P> accelerator;
 
-    const int startIndex = std::max(args.startIndex, 0);
-    const int endIndex = std::min(args.endIndex, (int)dCtx.images.size());
-    const int numberOfImages = endIndex - startIndex;
-    for (int i = startIndex; i < endIndex; i++) {
+    const int numberOfImages = (int)dCtx.images.size();
+    for (int i = 0; i < numberOfImages; i++) {
         const auto imageInfo = dCtx.images[i];
         std::string imagePath((char *)(dCtx.file + imageInfo->pathFileOffset));
         std::string imageName = imagePath.substr(imagePath.rfind("/") + 1);
 
         imagesProcessed++;
         activity.update(std::nullopt,
-                        std::format("[{:4}/{}] {}", imagesProcessed,
+                        fmt::format("[{:4}/{}] {}", imagesProcessed,
                                     numberOfImages, imageName));
 
         std::ostringstream loggerStream;
@@ -193,7 +167,7 @@ void runAllImages(Dyld::Context &dCtx, ProgramArguments &args) {
         // update summary and UI.
         auto logs = loggerStream.str();
         activity.loggerStream()
-            << std::format("processed {}", imageName) << std::endl
+            << fmt::format("processed {}", imageName) << std::endl
             << logs << std::endl;
         if (logs.length()) {
             summaryStream << "* " << imageName << std::endl

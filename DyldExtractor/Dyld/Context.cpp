@@ -1,5 +1,6 @@
 #include "Context.h"
 
+#include <fmt/core.h>
 #include <iostream>
 #include <stdexcept>
 
@@ -37,7 +38,7 @@ Context::Context(fs::path sharedCachePath, const uint8_t *subCacheUUID)
                                             header->subCacheArrayOffset) +
                     i;
                 subCacheUUID = subCacheInfo->uuid;
-                fullPath = pathBase + std::format(".{}", i + 1);
+                fullPath = pathBase + fmt::format(".{}", i + 1);
             }
             subcaches.emplace_back(fullPath, subCacheUUID);
         }

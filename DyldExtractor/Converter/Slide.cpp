@@ -558,7 +558,7 @@ void Converter::processSlideInfo(Utils::ExtractionContext<P> &eCtx) {
             break;
         }
         default:
-            throw std::logic_error(std::format("Unknown slide info version {}",
+            throw std::logic_error(fmt::format("Unknown slide info version {}",
                                                map.slideInfoVersion));
         }
     }

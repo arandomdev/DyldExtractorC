@@ -83,14 +83,14 @@ void ActivityLogger::update(std::optional<std::string> moduleName,
     // Update
     std::string output;
     if (updateLevel >= 0b100) {
-        output = std::format(
+        output = fmt::format(
             "\033[2K[({}) {}] {} - {}", _activityStates[_currentActivityState],
             _formatTime(elapsedTime), _currentModule, _currentMessage);
     } else if (updateLevel >= 0b10) {
-        output = std::format("[({}) {}", _activityStates[_currentActivityState],
+        output = fmt::format("[({}) {}", _activityStates[_currentActivityState],
                              _formatTime(elapsedTime));
     } else if (updateLevel >= 0b1) {
-        output = std::format("[({}", _activityStates[_currentActivityState]);
+        output = fmt::format("[({}", _activityStates[_currentActivityState]);
     }
 
     if (output.length()) {
@@ -111,5 +111,5 @@ std::string ActivityLogger::_formatTime(std::chrono::seconds seconds) {
     auto minutes = std::chrono::duration_cast<std::chrono::minutes>(seconds);
     seconds -= minutes;
 
-    return std::format("{:02d}:{:02d}", minutes.count(), seconds.count());
+    return fmt::format("{:02d}:{:02d}", minutes.count(), seconds.count());
 }

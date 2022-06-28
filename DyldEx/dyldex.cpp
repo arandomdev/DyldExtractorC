@@ -28,12 +28,11 @@ struct ProgramArguments {
 ProgramArguments parseArgs(int argc, char *argv[]) {
     argparse::ArgumentParser program("dyldex");
 
-    // TODO: specify main cache
     program.add_argument("cache_path")
         .help("The path to the shared cache. If there are subcaches, give the "
-              "directory.");
+              "main one (typically without the file extension).");
 
-    program.add_argument("-V", "--verbose")
+    program.add_argument("-v", "--verbose")
         .help("Enables debug logging messages.")
         .default_value(false)
         .implicit_value(true);
@@ -111,7 +110,7 @@ void extractImage(Dyld::Context &dCtx, ProgramArguments args) {
     auto extractionTargetFilter = *args.extractImage;
     auto possibleTargets = getImages(dCtx, args.extractImage);
     if (possibleTargets.size() == 0) {
-        std::cerr << std::format("Unable to find image '{}'",
+        std::cerr << fmt::format("Unable to find image '{}'",
                                  extractionTargetFilter)
                   << std::endl;
         return;
@@ -119,7 +118,7 @@ void extractImage(Dyld::Context &dCtx, ProgramArguments args) {
 
     auto &[imageIndex, imagePath] = possibleTargets[0];
     auto imageInfo = dCtx.images[imageIndex];
-    std::cout << std::format("Extracting '{}'", imagePath) << std::endl;
+    std::cout << fmt::format("Extracting '{}'", imagePath) << std::endl;
 
     // Setup context
     ActivityLogger activity("DyldEx", std::cout, true);
@@ -131,8 +130,9 @@ void extractImage(Dyld::Context &dCtx, ProgramArguments args) {
     }
     activity.update("DyldEx", "Starting up");
 
-    auto mCtx = dCtx.createMachoCtx<false, A::P>(imageInfo);
-    Utils::ExtractionContext<A::P> eCtx(dCtx, mCtx, &activity);
+    auto mCtx = dCtx.createMachoCtx<false, typename A::P>(imageInfo);
+    Utils::ExtractionContext<typename A::P> eCtx(dCtx, mCtx, &activity,
+                                                 nullptr);
 
     // Convert
     Converter::processSlideInfo(eCtx);

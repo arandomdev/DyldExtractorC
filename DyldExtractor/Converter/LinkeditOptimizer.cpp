@@ -1,6 +1,5 @@
 #include "LinkeditOptimizer.h"
 
-#include <format>
 #include <map>
 #include <spdlog/spdlog.h>
 #include <string_view>

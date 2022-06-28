@@ -70,9 +70,9 @@ def runCache(
 def main() -> None:
     argParser = argparse.ArgumentParser("RunAllCaches_SingleImage")
     argParser.add_argument("--executable-path", type=Path,
-                           default=os.environ.get("TESTING_EXECUTABLE_PATH"),
+                           default=os.environ.get("TESTING_DYLDEX_PATH"),
                            help="Path to dyldex, can be set with the "
-                           "environmental variable 'TESTING_EXECUTABLE_PATH'.")
+                           "environmental variable 'TESTING_DYLDEX_PATH'.")
     argParser.add_argument("--caches-path", type=Path,
                            default=os.environ.get("TESTING_CACHES_PATH"),
                            help="The folder containing the caches to test, "
@@ -88,7 +88,7 @@ def main() -> None:
 
     args = argParser.parse_args(namespace=Arguments())
     if not args.executable_path:
-        print("--executable-path or TESTING_EXECUTABLE_PATH needs to be "
+        print("--executable-path or TESTING_DYLDEX_PATH needs to be "
               "set.\n", file=sys.stderr)
         argParser.print_help()
         argParser.exit()

@@ -1592,10 +1592,10 @@ template <class A> void StubFixer<A>::_fixIndirectSymbols() {
             case S_INTERPOSING:
             case S_16BYTE_LITERALS:
             case S_LAZY_DYLIB_SYMBOL_POINTERS: {
-                SPDLOG_LOGGER_WARN(
-                    _logger,
-                    "Unable to indirect entries for section with type 0x{:x}",
-                    sect->flags & SECTION_TYPE);
+                SPDLOG_LOGGER_WARN(_logger,
+                                   "Unable to handle indirect entries for "
+                                   "section with type 0x{:x}",
+                                   sect->flags & SECTION_TYPE);
                 break;
             }
 

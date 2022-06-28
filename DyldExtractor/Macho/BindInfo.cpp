@@ -1,7 +1,7 @@
 #include "BindInfo.h"
 
 #include <Utils/Architectures.h>
-#include <format>
+#include <fmt/core.h>
 #include <stdexcept>
 
 using namespace Macho;
@@ -131,7 +131,7 @@ Generator<BindRecord> Macho::BindInfoReader(const uint8_t *start,
 
         default:
             throw std::invalid_argument(
-                std::format("Unknown bind opcode 0x{:02x}", *p));
+                fmt::format("Unknown bind opcode 0x{:02x}", *p));
         }
     }
 }

@@ -10,9 +10,10 @@ using namespace Utils;
 template <class P>
 ExtractionContext<P>::ExtractionContext(Dyld::Context &_dCtx,
                                         Macho::Context<false, P> &_mCtx,
-                                        ActivityLogger *_activity)
-    : dCtx(_dCtx), mCtx(_mCtx), activity(_activity), logger(_activity->logger) {
-}
+                                        ActivityLogger *_activity,
+                                        Accelerator<P> *_accelerator)
+    : dCtx(_dCtx), mCtx(_mCtx), activity(_activity), logger(_activity->logger),
+      accelerator(_accelerator) {}
 
 template <class P>
 ExtractionContext<P>::ExtractionContext(ExtractionContext<P> &&other)
