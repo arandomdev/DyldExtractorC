@@ -6,68 +6,88 @@
 
 namespace Converter {
 
-// Describes data in the linkedit
-struct LinkeditData {
-    uint8_t *offset;
-    uint8_t *data;
-    uint32_t dataSize;
-
-    bool operator==(const LinkeditData &a) const = default;
-};
-
-// Tracks and manages offsets from load commands and data.
 template <class P> class LinkeditTracker {
-  public:
-    LinkeditTracker(Macho::Context<false, P> &mCtx);
+public:
+  enum class Tag {
+    bindInfo,       // dyld_info_command->bind
+    weakBindInfo,   // dyld_info_command->weak_bind
+    lazyBindInfo,   // dyld_info_command->lazy_bind
+    exportInfo,     // export info trie
+    symbolEntries,  // symtab_command->syms
+    functionStarts, // LC_FUNCTION_STARTS
+    dataInCode,     // LC_DATA_IN_CODE
+    indirectSymtab, // dysymtab_command->indirect syms
+    stringPool,     // symtab->strings
+    generic
+  };
+  struct TrackedData {
+    uint8_t *data;
+    uint32_t *offsetField;
+    uint32_t dataSize;
+    Tag tag;
 
-    /// Insert data into the header.
-    ///
-    /// @param after The load command to insert after.
-    /// @param lc The load command to insert.
-    /// @return If the operational was successful.
-    bool insertLoadCommand(Macho::Loader::load_command *after,
-                           Macho::Loader::load_command *lc);
+    uint8_t *end() const;
+    auto operator<=>(const TrackedData &o) const;
+    bool operator==(const TrackedData &o) const;
+  };
 
-    /// Insert data into the linkedit.
-    ///
-    /// @param after Optional data to insert after, data will be inserted at the
-    ///   beginning if not given.
-    /// @param data Data to insert, is copied into the linkedit.
-    /// @returns If the operational was successful, if there was enough space.
-    bool insertLinkeditData(std::optional<LinkeditData> after,
-                            LinkeditData data);
+  LinkeditTracker(Macho::Context<false, P> &mCtx);
 
-    /// Resize a data region
-    ///
-    /// @param data The data region to resize.
-    /// @param newSize The new size of the region.
-    /// @returns If the operation was successful, if there was enough space.
-    bool resizeLinkeditData(LinkeditData &data, uint32_t newSize);
+  /// Add data to tracking
+  ///
+  /// Data must be inside the linkedit segment, the offset field must be within
+  /// the commands, and data size must be pointer aligned. Should be added in a
+  /// way that ensures a continuous range of data.
+  ///
+  /// @param data The data to track
+  /// @return if the operation was successful
+  bool addTrackingData(TrackedData data);
 
-    /// Add data already in the linkedit to tracking.
-    ///
-    /// @param data The data to track.
-    void trackData(LinkeditData data);
+  /// Insert data into the linkedit
+  ///
+  /// Segment command will be updated.
+  ///
+  /// @param metadata Info about the data to insert, must conform to the same
+  /// requirements in `addTrackingData`.
+  /// @param after Where to insert the data after, or nullptr for the beginning.
+  /// @param data Data to insert.
+  /// @returns If the operation was successfully.
+  bool insertData(TrackedData metadata, TrackedData *after,
+                  const uint8_t *data);
 
-    /// Get a LinkeditData by the tracking offset
-    ///
-    /// @param offset The tracked offset to search by
-    /// @returns A reference to the LinkeditData
-    LinkeditData *getLinkeditData(uint8_t *offset);
+  /// Resize a data region
+  ///
+  /// Segment command will be updated.
+  ///
+  /// @param data The data to resize.
+  /// @param newSize The new size of the data, needs to be pointer aligned.
+  /// @returns If the operation was successful
+  bool resizeData(TrackedData *data, uint32_t newSize);
 
-    // Data that is being tracked, is ordered based on the location of the
-    // data.
-    std::vector<LinkeditData> trackingData;
+  /// Find the first data with the tag
+  ///
+  /// @param tag The tag to search for.
+  /// @returns A pointer to the data or nullptr if not found.
+  TrackedData *findTag(Tag tag);
 
-  private:
-    typename Macho::Context<false, P>::HeaderT *_header;
-    uint8_t *_commandsStart;
-    uint32_t _headerSpaceAvailable;
+  std::vector<TrackedData> trackedData;
 
-    uint8_t *_linkeditStart;
-    uint8_t *_linkeditEnd;
+private:
+  bool preflightData(TrackedData &data);
+  std::vector<TrackedData>::iterator
+  insertDataIntoStore(const TrackedData &data);
+
+  Macho::Context<false, P> &mCtx;
+  Macho::Context<false, P>::HeaderT *mCtxHeader;
+
+  Macho::Loader::segment_command<P> *linkeditSeg;
+  uint8_t *linkeditStart;
+  uint8_t *linkeditEnd;
+  uint8_t *commandsStart;
+  uint8_t *commandsEnd;
 };
 
+bool isRedactedIndirect(uint32_t entry);
 template <class P> void optimizeLinkedit(Utils::ExtractionContext<P> &eCtx);
 
 } // namespace Converter

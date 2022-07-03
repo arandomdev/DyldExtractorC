@@ -6,6 +6,12 @@ target_link_libraries(dyldex PRIVATE spdlog::spdlog)
 target_link_libraries(dyldex PRIVATE argparse::argparse)
 target_link_libraries(dyldex PRIVATE fmt::fmt)
 
+add_executable(dyldex_info dyldex_info.cpp)
+target_link_libraries(dyldex_info PRIVATE DyldExtractor)
+target_link_libraries(dyldex_info PRIVATE spdlog::spdlog)
+target_link_libraries(dyldex_info PRIVATE argparse::argparse)
+target_link_libraries(dyldex_info PRIVATE fmt::fmt)
+
 add_executable(dyldex_all dyldex_all.cpp)
 target_link_libraries(dyldex_all PRIVATE DyldExtractor)
 target_link_libraries(dyldex_all PRIVATE spdlog::spdlog)

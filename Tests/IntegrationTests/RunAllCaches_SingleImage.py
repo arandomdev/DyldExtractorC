@@ -29,7 +29,11 @@ def findCaches(cachesPath: Path) -> tuple[Path, ...]:
     caches: list[Path] = []
     for arch in cachesPath.iterdir():
         for cache in arch.iterdir():
-            caches.append(cache)
+            if cache.is_dir():
+                caches.append(next(c for c in cache.iterdir() if not c.suffix))
+                pass
+            else:
+                caches.append(cache)
             pass
         pass
 
@@ -46,7 +50,7 @@ def runCache(
     for image in images:
         args = [
             executablePath,
-            "-V",
+            "-v",
             "-e",
             image,
             "-o",

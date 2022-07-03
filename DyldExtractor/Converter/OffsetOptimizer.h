@@ -7,9 +7,9 @@
 namespace Converter {
 
 struct WriteProcedure {
-    uint64_t writeOffset;
-    const uint8_t *source;
-    uint64_t size;
+  uint64_t writeOffset;
+  const uint8_t *source;
+  uint64_t size;
 };
 
 /// Optimize a mach-o file's offsets for output.

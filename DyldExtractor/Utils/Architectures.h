@@ -6,21 +6,21 @@
 namespace Utils {
 
 class Pointer32 {
-  public:
-    using ptr_t = uint32_t;
+public:
+  using ptr_t = uint32_t;
 };
 
 class Pointer64 {
-  public:
-    using ptr_t = uint64_t;
+public:
+  using ptr_t = uint64_t;
 };
 
 /// Align n up to a stride k
 ///
 /// @param n The number to align.
 /// @param k The stride to align to.
-template <class T1, class T2> inline void alignR(T1 &n, T2 k) {
-    n = (n + k - 1) / k * k;
+template <class T1, class T2> inline void align(T1 *n, T2 k) {
+  *n = (*n + k - 1) / k * k;
 }
 
 /// Align n up to a stride k
@@ -29,25 +29,25 @@ template <class T1, class T2> inline void alignR(T1 &n, T2 k) {
 /// @param k The stride to align to.
 /// @returns The aligned number.
 template <class T1, class T2> inline T1 align(T1 n, T2 k) {
-    return (n + k - 1) / k * k;
+  return (n + k - 1) / k * k;
 }
 
 namespace Arch {
 
 struct x86_64 {
-    using P = Pointer64;
+  using P = Pointer64;
 };
 
 struct arm {
-    using P = Pointer32;
+  using P = Pointer32;
 };
 
 struct arm64 {
-    using P = Pointer64;
+  using P = Pointer64;
 };
 
 struct arm64_32 {
-    using P = Pointer32;
+  using P = Pointer32;
 };
 
 } // namespace Arch

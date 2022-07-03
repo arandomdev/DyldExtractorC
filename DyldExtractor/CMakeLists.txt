@@ -4,11 +4,15 @@ add_library(DyldExtractor
 	Converter/LinkeditOptimizer.cpp
 	Converter/OffsetOptimizer.cpp
 	Converter/Slide.cpp
-	Converter/Stubs.cpp
+	Converter/Stubs/SymbolicInfo.cpp
+	Converter/Stubs/Symbolizer.cpp
+	Converter/Stubs/Arm64Utils.cpp
+	Converter/Stubs/Fixer.cpp
 	Logger/ActivityLogger.cpp
 	Dyld/Context.cpp
 	Macho/BindInfo.cpp
 	Macho/Context.cpp
+	Provider/PointerTracker.cpp
 	Utils/ExtractionContext.cpp
 )
 

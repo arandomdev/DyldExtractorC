@@ -1,15 +1,15 @@
 #ifndef __UTILS_EXTRACTIONCONTEXT__
 #define __UTILS_EXTRACTIONCONTEXT__
 
-#include <spdlog/logger.h>
-
+#include "Accelerator.h"
 #include <Dyld/Context.h>
 #include <Logger/ActivityLogger.h>
 #include <Macho/Context.h>
+#include <Provider/PointerTracker.h>
+#include <spdlog/logger.h>
 
 namespace Converter {
 template <class P> class LinkeditTracker;
-template <class P> class PointerTracker;
 template <class P> class Symbolizer;
 }; // namespace Converter
 
@@ -17,35 +17,29 @@ namespace Utils {
 template <class P> class Accelerator;
 
 template <class P> class ExtractionContext {
-  public:
-    Dyld::Context &dCtx;
-    Macho::Context<false, P> &mCtx;
-    ActivityLogger *activity;
-    std::shared_ptr<spdlog::logger> logger;
+public:
+  std::reference_wrapper<Dyld::Context> dCtx;
+  std::reference_wrapper<Macho::Context<false, P>> mCtx;
+  std::reference_wrapper<ActivityLogger> activity;
+  std::shared_ptr<spdlog::logger> logger;
+  std::reference_wrapper<Accelerator<P>> accelerator;
 
-    Converter::LinkeditTracker<P> *linkeditTracker = nullptr;
-    Converter::PointerTracker<P> *pointerTracker = nullptr;
-    Converter::Symbolizer<P> *symbolizer = nullptr;
+  Provider::PointerTracker<P> pointerTracker;
 
-    /// Accelerator cache when running multiple images.
-    /// Is not destroyed in deconstructor.
-    Accelerator<P> *accelerator = nullptr;
+  Converter::LinkeditTracker<P> *linkeditTracker = nullptr;
+  Converter::Symbolizer<P> *symbolizer = nullptr;
 
-    /// If this variable is non zero, the following is true,
-    /// * There are redacted indirect symbol entries.
-    /// * Space was allocated for the redacted symbol entries.
-    ///     * This space is placed at the end of the symbol table.
-    /// * The string table to at the end of the LINKEDIT segment.
-    ///
-    uint32_t redactedIndirectCount = 0;
+  // Linkedit optimizer guarantees that undefined symbols are added last in the
+  // symtab.
+  bool hasRedactedIndirect = false;
 
-    ExtractionContext(Dyld::Context &dCtx, Macho::Context<false, P> &mCtx,
-                      ActivityLogger *activity, Accelerator<P> *accelerator);
-    ExtractionContext(const ExtractionContext<P> &other) = delete;
-    ExtractionContext(ExtractionContext<P> &&other);
-    ExtractionContext &operator=(const ExtractionContext<P> &other) = delete;
-    ExtractionContext &operator=(ExtractionContext<P> &&other);
-    ~ExtractionContext();
+  ExtractionContext(Dyld::Context &dCtx, Macho::Context<false, P> &mCtx,
+                    ActivityLogger &activity, Accelerator<P> &accelerator);
+  ExtractionContext(const ExtractionContext<P> &other) = delete;
+  ExtractionContext(ExtractionContext<P> &&other);
+  ExtractionContext &operator=(const ExtractionContext<P> &other) = delete;
+  ExtractionContext &operator=(ExtractionContext<P> &&other);
+  ~ExtractionContext();
 };
 
 }; // namespace Utils
