@@ -5,8 +5,8 @@
 using namespace Provider;
 
 template <class P>
-void PointerTracker<P>::TrackedPointer::setTarget(const ptrT target) {
-  *(ptrT *)loc = target;
+void PointerTracker<P>::TrackedPointer::setTarget(const PtrT target) {
+  *(PtrT *)loc = target;
 }
 
 template <class P>
@@ -33,7 +33,7 @@ PointerTracker<P>::PointerTracker(const Utils::ExtractionContext<P> &eCtx)
 }
 
 template <class P>
-PointerTracker<P>::ptrT PointerTracker<P>::slideP(const ptrT addr) const {
+PointerTracker<P>::PtrT PointerTracker<P>::slideP(const PtrT addr) const {
   auto ptr = dCtx->convertAddrP(addr);
   for (auto &map : mappings) {
     if (!map.containsAddr(addr)) {
@@ -42,31 +42,31 @@ PointerTracker<P>::ptrT PointerTracker<P>::slideP(const ptrT addr) const {
 
     switch (map.slideInfoVersion) {
     case 1: {
-      return *(ptrT *)ptr;
+      return *(PtrT *)ptr;
       break;
     }
     case 2: {
-      return *(ptrT *)ptr & 0xffffffffff;
+      return *(PtrT *)ptr & 0xffffffffff;
       break;
     }
     case 3: {
       auto ptrInfo = (dyld_cache_slide_pointer3 *)ptr;
       if (ptrInfo->auth.authenticated) {
         auto slideInfo = (dyld_cache_slide_info3 *)map.slideInfo;
-        return (ptrT)ptrInfo->auth.offsetFromSharedCacheBase +
-               (ptrT)slideInfo->auth_value_add;
+        return (PtrT)ptrInfo->auth.offsetFromSharedCacheBase +
+               (PtrT)slideInfo->auth_value_add;
       } else {
         uint64_t value51 = ptrInfo->plain.pointerValue;
         uint64_t top8Bits = value51 & 0x0007F80000000000ULL;
         uint64_t bottom43Bits = value51 & 0x000007FFFFFFFFFFULL;
-        return (ptrT)(top8Bits << 13) | (ptrT)bottom43Bits;
+        return (PtrT)(top8Bits << 13) | (PtrT)bottom43Bits;
       }
       break;
     }
     case 4: {
       auto slideInfo = (dyld_cache_slide_info4 *)map.slideInfo;
       auto newValue = *(uint32_t *)ptr & ~(slideInfo->delta_mask);
-      return (ptrT)newValue + (ptrT)slideInfo->value_add;
+      return (PtrT)newValue + (PtrT)slideInfo->value_add;
       break;
     }
     default:
@@ -80,7 +80,7 @@ PointerTracker<P>::ptrT PointerTracker<P>::slideP(const ptrT addr) const {
 
 template <class P>
 PointerTracker<P>::TrackedPointer &
-PointerTracker<P>::trackP(uint8_t *loc, const ptrT target,
+PointerTracker<P>::trackP(uint8_t *loc, const PtrT target,
                           const uint8_t *authSource) {
   if (pointers.contains(loc)) {
     return pointers[loc];

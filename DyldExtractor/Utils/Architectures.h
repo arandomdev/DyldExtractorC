@@ -7,12 +7,14 @@ namespace Utils {
 
 class Pointer32 {
 public:
-  using ptr_t = uint32_t;
+  using PtrT = uint32_t;
+  using SPtrT = int32_t;
 };
 
 class Pointer64 {
 public:
-  using ptr_t = uint64_t;
+  using PtrT = uint64_t;
+  using SPtrT = int64_t;
 };
 
 /// Align n up to a stride k

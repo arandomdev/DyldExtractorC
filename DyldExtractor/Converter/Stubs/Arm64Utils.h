@@ -6,8 +6,9 @@
 
 namespace Converter {
 
-class Arm64Utils {
-  using P = typename Utils::Arch::arm64::P;
+template <class P> class Arm64Utils {
+  using PtrT = P::PtrT;
+  using SPtrT = P::SPtrT;
 
 public:
   enum class StubFormat {
@@ -26,9 +27,9 @@ public:
   };
 
   struct ResolverData {
-    uint64_t targetFunc;
-    uint64_t targetPtr;
-    uint64_t size;
+    PtrT targetFunc;
+    PtrT targetPtr;
+    PtrT size;
   };
 
   Arm64Utils(const Utils::ExtractionContext<P> &eCtx);
@@ -37,7 +38,7 @@ public:
   ///
   /// @param addr Address to the bind, usually start of the __stub_helper sect.
   /// @returns If it is or not.
-  bool isStubBinder(const uint64_t addr) const;
+  bool isStubBinder(const PtrT addr) const;
 
   /// Get data for a stub resolver
   ///
@@ -47,55 +48,54 @@ public:
   /// @param addr The address of the resolver
   /// @returns An optional pair that contains the target of the resolver and
   ///     the size of the resolver in bytes.
-  std::optional<ResolverData> getResolverData(const uint64_t addr) const;
+  std::optional<ResolverData> getResolverData(const PtrT addr) const;
 
   /// Get a stub's target and its format
   ///
   /// @param addr The address of the stub
   /// @returns An optional pair of the stub's target and its format.
-  std::optional<std::pair<uint64_t, StubFormat>>
-  resolveStub(const uint64_t addr) const;
+  std::optional<std::pair<PtrT, StubFormat>> resolveStub(const PtrT addr) const;
 
   /// Resolve a stub chain
   ///
   /// @param addr The address of the first stub.
   /// @returns The address to the final target, usually a function but can be
   ///     addr or an address to a stub if the format is not known.
-  uint64_t resolveStubChain(const uint64_t addr);
+  PtrT resolveStubChain(const PtrT addr);
 
   /// Get the offset data of a stub helper.
   ///
   /// @param addr The address of the stub helper
   /// @returns The offset data or nullopt if it's not a regular stub helper.
-  std::optional<uint64_t> getStubHelperData(const uint64_t addr) const;
+  std::optional<PtrT> getStubHelperData(const PtrT addr) const;
 
   /// Get the address of the symbol pointer for a normal stub.
   ///
   /// @param addr The address of the stub
   /// @returns The address of the pointer, or nullopt.
-  std::optional<uint64_t> getStubLdrAddr(const uint64_t addr) const;
+  std::optional<PtrT> getStubLdrAddr(const PtrT addr) const;
 
   /// Get the address of the symbol pointer for a normal auth stub.
   ///
   /// @param addr The address of the stub
   /// @returns The address of the pointer, or nullopt.
-  std::optional<uint64_t> getAuthStubLdrAddr(const uint64_t addr) const;
+  std::optional<PtrT> getAuthStubLdrAddr(const PtrT addr) const;
 
   /// Write a normal stub at the location.
   ///
   /// @param loc Where to write the stub
   /// @param stubAddr The address of the stub
   /// @param ldrAddr The address for the target load
-  void writeNormalStub(uint8_t *loc, const uint64_t stubAddr,
-                       const uint64_t ldrAddr) const;
+  void writeNormalStub(uint8_t *loc, const PtrT stubAddr,
+                       const PtrT ldrAddr) const;
 
   /// Write a normal auth stub at the location.
   ///
   /// @param loc Where to write the stub
   /// @param stubAddr The address of the stub
   /// @param ldrAddr The address for the target load
-  void writeNormalAuthStub(uint8_t *loc, const uint64_t stubAddr,
-                           const uint64_t ldrAddr) const;
+  void writeNormalAuthStub(uint8_t *loc, const PtrT stubAddr,
+                           const PtrT ldrAddr) const;
 
   /// Sign extend a number
   ///
@@ -116,16 +116,17 @@ private:
   Utils::Accelerator<P> &accelerator;
   const Provider::PointerTracker<P> ptrTracker;
 
-  using ResolverT = typename std::function<std::optional<uint64_t>(uint64_t)>;
+  using ResolverT = typename std::function<std::optional<PtrT>(PtrT)>;
   std::map<StubFormat, ResolverT> stubResolvers;
-  std::map<uint64_t, uint64_t> resolvedChains;
 
-  std::optional<uint64_t> getStubNormalTarget(const uint64_t addr) const;
-  std::optional<uint64_t> getStubOptimizedTarget(const uint64_t addr) const;
-  std::optional<uint64_t> getAuthStubNormalTarget(const uint64_t addr) const;
-  std::optional<uint64_t> getAuthStubOptimizedTarget(const uint64_t addr) const;
-  std::optional<uint64_t> getAuthStubResolverTarget(const uint64_t addr) const;
-  std::optional<uint64_t> getResolverTarget(const uint64_t addr) const;
+  std::optional<PtrT> getStubNormalTarget(const PtrT addr) const;
+  std::optional<PtrT> getStubOptimizedTarget(const PtrT addr) const;
+  std::optional<PtrT> getAuthStubNormalTarget(const PtrT addr) const;
+  std::optional<PtrT> getAuthStubOptimizedTarget(const PtrT addr) const;
+  std::optional<PtrT> getAuthStubResolverTarget(const PtrT addr) const;
+  std::optional<PtrT> getResolverTarget(const PtrT addr) const;
+
+  static PtrT getLdrOffset(const uint32_t ldrI);
 };
 
 }; // namespace Converter

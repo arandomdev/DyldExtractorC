@@ -13,7 +13,7 @@ template <class A> class StubFixer;
 
 template <class A> class SymbolPointerCache {
   using P = A::P;
-  using ptrT = P::ptr_t;
+  using PtrT = P::PtrT;
 
 public:
   enum class PointerType {
@@ -27,22 +27,20 @@ public:
   void scanPointers();
 
   /// Check if a pointer is free to use
-  bool isAvailable(PointerType pType, uint64_t addr);
+  bool isAvailable(PointerType pType, PtrT addr);
   /// Provide symbolic info for a unnamed pointer
-  void namePointer(PointerType pType, uint64_t addr, SymbolicInfo info);
-  SymbolicInfo *getPointerInfo(PointerType pType, uint64_t addr);
+  void namePointer(PointerType pType, PtrT addr, SymbolicInfo info);
+  SymbolicInfo *getPointerInfo(PointerType pType, PtrT addr);
 
-  using PtrMapT = std::map<uint64_t, SymbolicInfo>;
+  using PtrMapT = std::map<PtrT, SymbolicInfo>;
   struct {
-    // TODO: Shouldn't this be ptrT
     PtrMapT normal;
     PtrMapT lazy;
     PtrMapT auth;
   } ptr;
 
-  using ReverseMapT =
-      std::map<std::reference_wrapper<const std::string>, std::set<uint64_t>,
-               std::less<const std::string>>;
+  using ReverseMapT = std::map<std::reference_wrapper<const std::string>,
+                               std::set<PtrT>, std::less<const std::string>>;
   struct {
     ReverseMapT normal;
     ReverseMapT lazy;
@@ -50,20 +48,20 @@ public:
   } reverse;
 
   struct {
-    std::set<uint64_t> normal;
-    std::set<uint64_t> lazy;
-    std::set<uint64_t> auth;
+    std::set<PtrT> normal;
+    std::set<PtrT> lazy;
+    std::set<PtrT> auth;
   } unnamed;
 
   struct {
-    std::set<uint64_t> normal;
-    std::set<uint64_t> lazy;
-    std::set<uint64_t> auth;
+    std::set<PtrT> normal;
+    std::set<PtrT> lazy;
+    std::set<PtrT> auth;
   } used;
 
 private:
-  std::map<uint64_t, Macho::BindRecord> getBindRecords();
-  void addPointerInfo(PointerType pType, uint64_t pAddr, SymbolicInfo info);
+  std::map<PtrT, Macho::BindRecord> getBindRecords();
+  void addPointerInfo(PointerType pType, PtrT pAddr, SymbolicInfo info);
 
   StubFixer<A> &delegate;
   Macho::Context<false, P> &mCtx;
@@ -71,23 +69,25 @@ private:
   std::shared_ptr<spdlog::logger> logger;
 };
 
-class Arm64Fixer {
-  using A = Utils::Arch::arm64;
+template <class A> class Arm64Fixer {
   using P = A::P;
+  using PtrT = P::PtrT;
+  using SPtrT = P::SPtrT;
 
   using SPointerType = SymbolPointerCache<A>::PointerType;
+  using AStubFormat = Arm64Utils<P>::StubFormat;
 
 public:
   Arm64Fixer(StubFixer<A> &delegate);
   void fix();
 
-  std::map<uint64_t, SymbolicInfo> stubMap;
+  std::map<PtrT, SymbolicInfo> stubMap;
 
 private:
   struct StubInfo {
-    Arm64Utils::StubFormat format;
-    uint64_t target; // The target function of the stub
-    uint64_t addr;
+    AStubFormat format;
+    PtrT target; // The target function of the stub
+    PtrT addr;
     uint8_t *loc;  // Writable location of the stub
     uint32_t size; // Size in bytes of the stub
   };
@@ -98,7 +98,7 @@ private:
   void fixPass2();
   void fixCallsites();
 
-  void addStubInfo(uint64_t sAddr, SymbolicInfo info);
+  void addStubInfo(PtrT sAddr, SymbolicInfo info);
 
   StubFixer<A> &delegate;
   Macho::Context<false, P> &mCtx;
@@ -107,9 +107,9 @@ private:
   Symbolizer<P> *symbolizer;
 
   SymbolPointerCache<A> &pointerCache;
-  Arm64Utils &arm64Utils;
+  Arm64Utils<P> &arm64Utils;
 
-  std::map<std::reference_wrapper<const std::string>, std::set<uint64_t>,
+  std::map<std::reference_wrapper<const std::string>, std::set<PtrT>,
            std::less<const std::string>>
       reverseStubMap;
 
@@ -118,9 +118,9 @@ private:
 
 template <class A> class StubFixer {
   friend class SymbolPointerCache<A>;
-  friend class Arm64Fixer;
+  friend class Arm64Fixer<A>;
   using P = A::P;
-  using PtrT = P::ptr_t;
+  using PtrT = P::PtrT;
 
 public:
   StubFixer(Utils::ExtractionContext<P> &eCtx);
@@ -129,10 +129,10 @@ public:
 private:
   std::pair<const Macho::Loader::nlist<P> *, const char *>
   lookupIndirectEntry(const uint32_t index) const;
-  uint64_t resolveStubChain(const uint64_t addr);
+  PtrT resolveStubChain(const PtrT addr);
   void checkIndirectEntries();
   void fixIndirectEntries();
-  bool isInCodeRegions(uint64_t addr);
+  bool isInCodeRegions(PtrT addr);
 
   Utils::ExtractionContext<P> &eCtx;
   Dyld::Context &dCtx;
@@ -151,8 +151,8 @@ private:
 
   SymbolPointerCache<A> pointerCache;
 
-  std::optional<Arm64Utils> arm64Utils;
-  std::optional<Arm64Fixer> arm64Fixer;
+  std::optional<Arm64Utils<P>> arm64Utils;
+  std::optional<Arm64Fixer<A>> arm64Fixer;
 };
 
 template <class A> void fixStubs(Utils::ExtractionContext<typename A::P> &eCtx);

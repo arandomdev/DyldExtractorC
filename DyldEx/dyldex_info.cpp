@@ -55,24 +55,26 @@ ProgramArguments parseArgs(int argc, char *argv[]) {
   return args;
 }
 
-std::string formatStubFormat(Converter::Arm64Utils::StubFormat format) {
+template <class P>
+std::string
+formatStubFormat(typename Converter::Arm64Utils<P>::StubFormat format) {
   switch (format) {
-  case Converter::Arm64Utils::StubFormat::StubNormal:
+  case Converter::Arm64Utils<P>::StubFormat::StubNormal:
     return "StubNormal";
     break;
-  case Converter::Arm64Utils::StubFormat::StubOptimized:
+  case Converter::Arm64Utils<P>::StubFormat::StubOptimized:
     return "StubOptimized";
     break;
-  case Converter::Arm64Utils::StubFormat::AuthStubNormal:
+  case Converter::Arm64Utils<P>::StubFormat::AuthStubNormal:
     return "AuthStubNormal";
     break;
-  case Converter::Arm64Utils::StubFormat::AuthStubOptimized:
+  case Converter::Arm64Utils<P>::StubFormat::AuthStubOptimized:
     return "AuthStubOptimized";
     break;
-  case Converter::Arm64Utils::StubFormat::AuthStubResolver:
+  case Converter::Arm64Utils<P>::StubFormat::AuthStubResolver:
     return "AuthStubResolver";
     break;
-  case Converter::Arm64Utils::StubFormat::Resolver:
+  case Converter::Arm64Utils<P>::StubFormat::Resolver:
     return "Resolver";
     break;
 
@@ -132,7 +134,8 @@ template <class A> void program(Dyld::Context &dCtx, ProgramArguments &args) {
         }
 
         auto [newAddr, format] = *data;
-        std::cout << std::format("{}: {:#x} -> {:#x}", formatStubFormat(format),
+        std::cout << std::format("{}: {:#x} -> {:#x}",
+                                 formatStubFormat<typename A::P>(format),
                                  currentAddr, newAddr);
         if (currentAddr == newAddr) {
           break;

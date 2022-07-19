@@ -88,7 +88,7 @@ public:
 private:
   void processPage(uint8_t *page, uint64_t pageOffset);
 
-  using uintptr_t = P::ptr_t;
+  using uintptr_t = P::PtrT;
 
   Utils::ExtractionContext<P> &eCtx;
   Macho::Context<false, P> &mCtx;

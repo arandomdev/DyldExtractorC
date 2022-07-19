@@ -43,6 +43,8 @@ using SymbolizerExportEntryMapT =
 
 /// Accelerate modules when processing more than one image. Single threaded.
 template <class P> class Accelerator {
+  using PtrT = P::PtrT;
+
 public:
   // Symbolizer
   std::map<std::string, const dyld_cache_image_info *> pathToImage;
@@ -50,12 +52,12 @@ public:
       exportsCache;
 
   // Arm64Utils
-  std::map<uint64_t, uint64_t> arm64ResolvedChains;
+  std::map<PtrT, PtrT> arm64ResolvedChains;
 
   // StubFixer
   struct CodeRegion {
-    uint64_t start;
-    uint64_t end;
+    PtrT start;
+    PtrT end;
     auto operator<=>(const auto &o) const { return start <=> o.start; }
   };
   std::set<CodeRegion> codeRegions;

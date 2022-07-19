@@ -47,7 +47,7 @@ template <class P>
 Generator<BindRecord> Macho::BindInfoReader(const uint8_t *start,
                                             const uint8_t *end) {
   BindRecord currentRecord;
-  const uint32_t ptrSize = sizeof(P::ptr_t);
+  const uint32_t ptrSize = sizeof(P::PtrT);
   const uint8_t *p = start;
 
   while (p < end) {

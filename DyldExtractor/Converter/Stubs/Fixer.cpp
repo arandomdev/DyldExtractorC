@@ -49,8 +49,8 @@ template <class A> void SymbolPointerCache<A>::scanPointers() {
         auto pType = getPointerType(sect);
 
         uint32_t indirectI = sect->reserved1;
-        for (ptrT pAddr = sect->addr; pAddr < sect->addr + sect->size;
-             pAddr += sizeof(ptrT), indirectI++) {
+        for (PtrT pAddr = sect->addr; pAddr < sect->addr + sect->size;
+             pAddr += sizeof(PtrT), indirectI++) {
           activity.update();
 
           std::set<SymbolicInfo::Symbol> symbols;
@@ -108,7 +108,7 @@ template <class A> void SymbolPointerCache<A>::scanPointers() {
 }
 
 template <class A>
-bool SymbolPointerCache<A>::isAvailable(PointerType pType, uint64_t addr) {
+bool SymbolPointerCache<A>::isAvailable(PointerType pType, PtrT addr) {
   switch (pType) {
   case PointerType::normal:
     return ptr.normal.contains(addr) && !used.normal.contains(addr);
@@ -129,7 +129,7 @@ bool SymbolPointerCache<A>::isAvailable(PointerType pType, uint64_t addr) {
 }
 
 template <class A>
-void SymbolPointerCache<A>::namePointer(PointerType pType, uint64_t addr,
+void SymbolPointerCache<A>::namePointer(PointerType pType, PtrT addr,
                                         SymbolicInfo info) {
   switch (pType) {
   case PointerType::normal:
@@ -152,7 +152,7 @@ void SymbolPointerCache<A>::namePointer(PointerType pType, uint64_t addr,
 
 template <class A>
 SymbolicInfo *SymbolPointerCache<A>::getPointerInfo(PointerType pType,
-                                                    uint64_t addr) {
+                                                    PtrT addr) {
   switch (pType) {
   case PointerType::normal:
     if (ptr.normal.contains(addr)) {
@@ -185,8 +185,9 @@ SymbolicInfo *SymbolPointerCache<A>::getPointerInfo(PointerType pType,
 }
 
 template <class A>
-std::map<uint64_t, Macho::BindRecord> SymbolPointerCache<A>::getBindRecords() {
-  std::map<uint64_t, Macho::BindRecord> bindRecords;
+std::map<typename SymbolPointerCache<A>::PtrT, Macho::BindRecord>
+SymbolPointerCache<A>::getBindRecords() {
+  std::map<PtrT, Macho::BindRecord> bindRecords;
 
   if (!delegate.dyldInfo) {
     return bindRecords;
@@ -250,14 +251,14 @@ std::map<uint64_t, Macho::BindRecord> SymbolPointerCache<A>::getBindRecords() {
   for (auto &r : records) {
     const auto bindAddr =
         mCtx.segments[r.segIndex].command->vmaddr + r.segOffset;
-    bindRecords[bindAddr] = r;
+    bindRecords[(unsigned int)bindAddr] = r;
   }
 
   return bindRecords;
 }
 
 template <class A>
-void SymbolPointerCache<A>::addPointerInfo(PointerType pType, uint64_t pAddr,
+void SymbolPointerCache<A>::addPointerInfo(PointerType pType, PtrT pAddr,
                                            SymbolicInfo info) {
   PtrMapT *pointers;
   ReverseMapT *reversePtrs;
@@ -299,12 +300,18 @@ void SymbolPointerCache<A>::addPointerInfo(PointerType pType, uint64_t pAddr,
 #pragma endregion SymbolPointerCache
 
 #pragma region Arm64Fixer
-Arm64Fixer::Arm64Fixer(StubFixer<A> &delegate)
+template <class A>
+Arm64Fixer<A>::Arm64Fixer(StubFixer<A> &delegate)
     : delegate(delegate), mCtx(delegate.mCtx), activity(delegate.activity),
       logger(delegate.logger), symbolizer(delegate.symbolizer),
-      pointerCache(delegate.pointerCache), arm64Utils(*delegate.arm64Utils) {}
+      pointerCache(delegate.pointerCache), arm64Utils(*delegate.arm64Utils) {
+  if constexpr (!std::is_same_v<A, Utils::Arch::arm64> &&
+                !std::is_same_v<A, Utils::Arch::arm64_32>) {
+    assert(!"Arm64Fixer only supports arches arm64 and arm64_32");
+  }
+}
 
-void Arm64Fixer::fix() {
+template <class A> void Arm64Fixer<A>::fix() {
   fixStubHelpers();
   scanStubs();
   fixPass1();
@@ -312,8 +319,8 @@ void Arm64Fixer::fix() {
   fixCallsites();
 }
 
-void Arm64Fixer::fixStubHelpers() {
-  static const uint64_t REG_HELPER_SIZE = 0xC;
+template <class A> void Arm64Fixer<A>::fixStubHelpers() {
+  static const PtrT REG_HELPER_SIZE = 0xC;
 
   const auto helperSect = mCtx.getSection("__TEXT", "__stub_helper");
   if (!helperSect) {
@@ -329,8 +336,8 @@ void Arm64Fixer::fixStubHelpers() {
   const auto bindInfoEnd =
       canFixReg ? bindInfoStart + dyldInfo->lazy_bind_size : nullptr;
 
-  const uint64_t helperEnd = helperSect->addr + helperSect->size;
-  uint64_t helperAddr = helperSect->addr;
+  const PtrT helperEnd = helperSect->addr + helperSect->size;
+  PtrT helperAddr = helperSect->addr;
   if (arm64Utils.isStubBinder(helperAddr)) {
     helperAddr += 0x18; // Size of binder;
   }
@@ -345,9 +352,9 @@ void Arm64Fixer::fixStubHelpers() {
                                                    bindInfoEnd)();
 
         // Point the pointer to the stub helper
-        uint64_t pAddr = mCtx.segments[bindRecord.segIndex].command->vmaddr +
-                         bindRecord.segOffset;
-        *(uint64_t *)mCtx.convertAddrP(pAddr) = helperAddr;
+        PtrT pAddr = mCtx.segments[bindRecord.segIndex].command->vmaddr +
+                     (PtrT)bindRecord.segOffset;
+        *(PtrT *)mCtx.convertAddrP(pAddr) = helperAddr;
       } else {
         SPDLOG_LOGGER_WARN(
             logger, "Unable to fix stub helper at {:#x} without bind info.",
@@ -368,7 +375,7 @@ void Arm64Fixer::fixStubHelpers() {
       }
 
       // Point the pointer to the helper
-      *(uint64_t *)mCtx.convertAddrP(resolverInfo->targetPtr) = helperAddr;
+      *(PtrT *)mCtx.convertAddrP(resolverInfo->targetPtr) = helperAddr;
 
       helperAddr += resolverInfo->size;
       continue;
@@ -380,7 +387,7 @@ void Arm64Fixer::fixStubHelpers() {
   }
 }
 
-void Arm64Fixer::scanStubs() {
+template <class A> void Arm64Fixer<A>::scanStubs() {
   activity.update(std::nullopt, "Scanning Stubs");
 
   mCtx.enumerateSections(
@@ -417,7 +424,7 @@ void Arm64Fixer::scanStubs() {
           }
 
           // Though its pointer if not optimized
-          if (sFormat == Arm64Utils::StubFormat::StubNormal) {
+          if (sFormat == AStubFormat::StubNormal) {
             if (const auto pAddr = *arm64Utils.getStubLdrAddr(sAddr);
                 mCtx.containsAddr(pAddr)) {
               if (pointerCache.ptr.lazy.contains(pAddr)) {
@@ -430,7 +437,7 @@ void Arm64Fixer::scanStubs() {
             }
           }
 
-          if (sFormat == Arm64Utils::StubFormat::AuthStubNormal) {
+          if (sFormat == AStubFormat::AuthStubNormal) {
             if (const auto pAddr = *arm64Utils.getAuthStubLdrAddr(sAddr);
                 mCtx.containsAddr(pAddr) &&
                 pointerCache.ptr.auth.contains(pAddr)) {
@@ -459,7 +466,8 @@ void Arm64Fixer::scanStubs() {
       });
 }
 
-void Arm64Fixer::addStubInfo(uint64_t addr, SymbolicInfo info) {
+template <class A>
+void Arm64Fixer<A>::addStubInfo(PtrT addr, SymbolicInfo info) {
   SymbolicInfo *newInfo;
   if (stubMap.contains(addr)) {
     newInfo = &stubMap.at(addr);
@@ -476,7 +484,7 @@ void Arm64Fixer::addStubInfo(uint64_t addr, SymbolicInfo info) {
 /// Fix stubs, first pass
 ///
 /// The first pass tries to remove non broken stubs, or trivially fixable stubs.
-void Arm64Fixer::fixPass1() {
+template <class A> void Arm64Fixer<A>::fixPass1() {
   activity.update(std::nullopt, "Fixing Stubs: Pass 1");
 
   for (auto it = brokenStubs.begin(); it != brokenStubs.end();) {
@@ -488,7 +496,7 @@ void Arm64Fixer::fixPass1() {
 
     bool fixed = false;
     switch (sInfo.format) {
-    case Arm64Utils::StubFormat::StubNormal: {
+    case AStubFormat::StubNormal: {
       if (const auto pAddr = *arm64Utils.getStubLdrAddr(sAddr);
           mCtx.containsAddr(pAddr)) {
         if (pointerCache.isAvailable(SPointerType::lazy, pAddr)) {
@@ -518,19 +526,19 @@ void Arm64Fixer::fixPass1() {
       break;
     }
 
-    case Arm64Utils::StubFormat::AuthStubNormal: {
+    case AStubFormat::AuthStubNormal: {
       if (const auto pAddr = *arm64Utils.getAuthStubLdrAddr(sAddr);
           mCtx.containsAddr(pAddr)) {
         if (pointerCache.isAvailable(SPointerType::auth, pAddr)) {
           // Mark the pointer as used, zero out pointer
           pointerCache.used.auth.insert(pAddr);
-          *(uint64_t *)mCtx.convertAddrP(pAddr) = 0;
+          *(PtrT *)mCtx.convertAddrP(pAddr) = 0;
           fixed = true;
         } else if (pointerCache.unnamed.auth.contains(pAddr)) {
           // Name the pointer and mark as used, zero out pointer
           pointerCache.namePointer(SPointerType::auth, pAddr, sSymbols);
           pointerCache.used.auth.insert(pAddr);
-          *(uint64_t *)mCtx.convertAddrP(pAddr) = 0;
+          *(PtrT *)mCtx.convertAddrP(pAddr) = 0;
           fixed = true;
         } else {
           SPDLOG_LOGGER_WARN(
@@ -542,18 +550,18 @@ void Arm64Fixer::fixPass1() {
       break;
     }
 
-    case Arm64Utils::StubFormat::StubOptimized: {
+    case AStubFormat::StubOptimized: {
       if (sInfo.size == 0x10 && !pointerCache.ptr.auth.empty()) {
         // In older caches, optimized auth stubs resemble regular optimized
         // stubs
-        brokenStubs.emplace_back(Arm64Utils::StubFormat::AuthStubOptimized,
-                                 sInfo.target, sAddr, sInfo.loc, sInfo.size);
+        brokenStubs.emplace_back(AStubFormat::AuthStubOptimized, sInfo.target,
+                                 sAddr, sInfo.loc, sInfo.size);
         fixed = true;
       }
       break;
     }
 
-    case Arm64Utils::StubFormat::Resolver: {
+    case AStubFormat::Resolver: {
       if (mCtx.containsAddr(sInfo.target)) {
         fixed = true;
       }
@@ -575,7 +583,7 @@ void Arm64Fixer::fixPass1() {
 /// Fix stub, second pass
 ///
 /// The second pass converts optimized stubs.
-void Arm64Fixer::fixPass2() {
+template <class A> void Arm64Fixer<A>::fixPass2() {
   activity.update(std::nullopt, "Fixing Stubs: Pass 2");
 
   for (auto &sInfo : brokenStubs) {
@@ -586,10 +594,10 @@ void Arm64Fixer::fixPass2() {
     const auto &sSymbols = stubMap.at(sInfo.addr);
 
     switch (sInfo.format) {
-    case Arm64Utils::StubFormat::StubNormal:
-    case Arm64Utils::StubFormat::StubOptimized: {
+    case AStubFormat::StubNormal:
+    case AStubFormat::StubOptimized: {
       // Try to find an unused named lazy pointer
-      uint64_t pAddr = 0;
+      PtrT pAddr = 0;
       for (const auto &sym : sSymbols.symbols) {
         if (pointerCache.reverse.lazy.contains(sym.name)) {
           for (const auto ptr : pointerCache.reverse.lazy[sym.name]) {
@@ -613,7 +621,7 @@ void Arm64Fixer::fixPass2() {
               if (!pointerCache.used.normal.contains(ptr)) {
                 pAddr = ptr;
                 pointerCache.used.normal.insert(ptr);
-                *(uint64_t *)mCtx.convertAddrP(ptr) = 0;
+                *(PtrT *)mCtx.convertAddrP(ptr) = 0;
                 break;
               }
             }
@@ -636,7 +644,7 @@ void Arm64Fixer::fixPass2() {
         pAddr = *pointerCache.unnamed.normal.begin();
         pointerCache.namePointer(SPointerType::normal, pAddr, sSymbols);
         pointerCache.used.normal.insert(pAddr);
-        *(uint64_t *)mCtx.convertAddrP(pAddr) = 0;
+        *(PtrT *)mCtx.convertAddrP(pAddr) = 0;
       }
 
       if (!pAddr) {
@@ -650,10 +658,10 @@ void Arm64Fixer::fixPass2() {
       break;
     }
 
-    case Arm64Utils::StubFormat::AuthStubNormal:
-    case Arm64Utils::StubFormat::AuthStubOptimized: {
+    case AStubFormat::AuthStubNormal:
+    case AStubFormat::AuthStubOptimized: {
       // Try to find an unused named pointer
-      uint64_t pAddr = 0;
+      PtrT pAddr = 0;
       for (const auto &sym : sSymbols.symbols) {
         if (pointerCache.reverse.auth.contains(sym.name)) {
           for (const auto ptr : pointerCache.reverse.auth[sym.name]) {
@@ -683,11 +691,11 @@ void Arm64Fixer::fixPass2() {
       // Fix stub and zero out pointer
       arm64Utils.writeNormalAuthStub(sLoc, sAddr, pAddr);
       pointerCache.used.auth.insert(pAddr);
-      *(uint64_t *)mCtx.convertAddrP(pAddr) = 0;
+      *(PtrT *)mCtx.convertAddrP(pAddr) = 0;
       break;
     }
 
-    case Arm64Utils::StubFormat::Resolver: {
+    case AStubFormat::Resolver: {
       SPDLOG_LOGGER_ERROR(logger, "Unable to fix auth stub resolver at {:#x}",
                           sAddr);
       break;
@@ -699,7 +707,7 @@ void Arm64Fixer::fixPass2() {
   }
 }
 
-void Arm64Fixer::fixCallsites() {
+template <class A> void Arm64Fixer<A>::fixCallsites() {
   activity.update(std::nullopt, "Fixing Callsites");
 
   const auto textSect = mCtx.getSection("__TEXT", "__text");
@@ -723,8 +731,8 @@ void Arm64Fixer::fixCallsites() {
     }
 
     const auto brInstr = (uint32_t *)iLoc;
-    const int64_t brOff =
-        arm64Utils.signExtend<int64_t, 28>((*brInstr & 0x3FFFFFF) << 2);
+    const SPtrT brOff =
+        arm64Utils.signExtend<SPtrT, 28>((*brInstr & 0x3FFFFFF) << 2);
     const auto brTarget = iAddr + brOff;
 
     // Check if it needs fixing
@@ -766,7 +774,7 @@ void Arm64Fixer::fixCallsites() {
     for (const auto &name : names->symbols) {
       if (reverseStubMap.contains(name.name)) {
         const auto stubAddr = *reverseStubMap[name.name].begin();
-        const auto imm26 = ((int64_t)stubAddr - iAddr) >> 2;
+        const auto imm26 = ((SPtrT)stubAddr - iAddr) >> 2;
         *brInstr = (*brInstr & 0xFC000000) | (uint32_t)imm26;
         fixed = true;
         break;
@@ -800,7 +808,8 @@ StubFixer<A>::StubFixer(Utils::ExtractionContext<P> &eCtx)
       dysymtab(mCtx.getLoadCommand<false, Macho::Loader::dysymtab_command>()),
       pointerCache(*this) {
   eCtx.symbolizer = symbolizer;
-  if constexpr (std::is_same_v<A, Utils::Arch::arm64>) {
+  if constexpr (std::is_same_v<A, Utils::Arch::arm64> ||
+                std::is_same_v<A, Utils::Arch::arm64_32>) {
     arm64Utils.emplace(eCtx);
     arm64Fixer.emplace(*this);
   }
@@ -840,7 +849,8 @@ template <class A> void StubFixer<A>::fix() {
   symbolizer->enumerate();
   pointerCache.scanPointers();
 
-  if constexpr (std::is_same_v<A, Utils::Arch::arm64>) {
+  if constexpr (std::is_same_v<A, Utils::Arch::arm64> ||
+                std::is_same_v<A, Utils::Arch::arm64_32>) {
     arm64Fixer->fix();
   }
 
@@ -866,8 +876,9 @@ StubFixer<A>::lookupIndirectEntry(const uint32_t index) const {
 }
 
 template <class A>
-uint64_t StubFixer<A>::resolveStubChain(const uint64_t addr) {
-  if constexpr (std::is_same_v<A, Utils::Arch::arm64>) {
+StubFixer<A>::PtrT StubFixer<A>::resolveStubChain(const PtrT addr) {
+  if constexpr (std::is_same_v<A, Utils::Arch::arm64> ||
+                std::is_same_v<A, Utils::Arch::arm64_32>) {
     return arm64Utils->resolveStubChain(addr);
   }
 
@@ -1053,7 +1064,8 @@ template <class A> void StubFixer<A>::fixIndirectEntries() {
           }
 
           SymbolicInfo *sInfo = nullptr;
-          if constexpr (std::is_same_v<A, Utils::Arch::arm64>) {
+          if constexpr (std::is_same_v<A, Utils::Arch::arm64> ||
+                        std::is_same_v<A, Utils::Arch::arm64_32>) {
             if (arm64Fixer->stubMap.contains(sAddr)) {
               sInfo = &arm64Fixer->stubMap.at(sAddr);
             }
@@ -1150,7 +1162,7 @@ template <class A> void StubFixer<A>::fixIndirectEntries() {
   dysymtab->nundefsym += (uint32_t)newEntries.size();
 }
 
-template <class A> bool StubFixer<A>::isInCodeRegions(uint64_t addr) {
+template <class A> bool StubFixer<A>::isInCodeRegions(PtrT addr) {
   if (accelerator.codeRegions.empty()) {
     return false;
   }
