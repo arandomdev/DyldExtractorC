@@ -1,22 +1,27 @@
 cmake_minimum_required(VERSION 3.12)
 
+configure_file(config.h.in config.h)
+
 add_executable(dyldex dyldex.cpp)
 target_link_libraries(dyldex PRIVATE DyldExtractor)
 target_link_libraries(dyldex PRIVATE spdlog::spdlog)
 target_link_libraries(dyldex PRIVATE argparse::argparse)
 target_link_libraries(dyldex PRIVATE fmt::fmt)
+target_include_directories(dyldex PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
 add_executable(dyldex_info dyldex_info.cpp)
 target_link_libraries(dyldex_info PRIVATE DyldExtractor)
 target_link_libraries(dyldex_info PRIVATE spdlog::spdlog)
 target_link_libraries(dyldex_info PRIVATE argparse::argparse)
 target_link_libraries(dyldex_info PRIVATE fmt::fmt)
+target_include_directories(dyldex_info PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
 add_executable(dyldex_all dyldex_all.cpp)
 target_link_libraries(dyldex_all PRIVATE DyldExtractor)
 target_link_libraries(dyldex_all PRIVATE spdlog::spdlog)
 target_link_libraries(dyldex_all PRIVATE argparse::argparse)
 target_link_libraries(dyldex_all PRIVATE fmt::fmt)
+target_include_directories(dyldex_all PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
 add_executable(dyldex_all_multiprocess dyldex_all_multiprocess.cpp)
 target_link_libraries(dyldex_all_multiprocess PRIVATE DyldExtractor)
@@ -24,3 +29,4 @@ target_link_libraries(dyldex_all_multiprocess PRIVATE spdlog::spdlog)
 target_link_libraries(dyldex_all_multiprocess PRIVATE argparse::argparse)
 target_link_libraries(dyldex_all_multiprocess PRIVATE fmt::fmt)
 target_link_libraries(dyldex_all_multiprocess PRIVATE ${Boost_LIBRARIES})
+target_include_directories(dyldex_all_multiprocess PRIVATE ${CMAKE_CURRENT_BINARY_DIR})

@@ -2,8 +2,7 @@
 # and include sub-projects here.
 #
 cmake_minimum_required(VERSION 3.12)
-
-project("DyldExtractorC")
+project("DyldExtractorC" VERSION 0.0.1)
 
 # Check endianness
 include(TestBigEndian)

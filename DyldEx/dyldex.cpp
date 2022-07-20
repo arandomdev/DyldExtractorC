@@ -14,6 +14,8 @@
 #include <Macho/Context.h>
 #include <Utils/ExtractionContext.h>
 
+#include "config.h"
+
 namespace fs = std::filesystem;
 
 struct ProgramArguments {
@@ -23,6 +25,7 @@ struct ProgramArguments {
   std::optional<std::string> listFilter;
   std::optional<std::string> extractImage;
   std::optional<fs::path> outputPath;
+  bool imbedVersion;
 
   union {
     uint32_t raw;
@@ -34,7 +37,7 @@ struct ProgramArguments {
 };
 
 ProgramArguments parseArgs(int argc, char *argv[]) {
-  argparse::ArgumentParser program("dyldex");
+  argparse::ArgumentParser program("dyldex", DYLDEXTRACTORC_VERSION);
 
   program.add_argument("cache_path")
       .help("The path to the shared cache. If there are subcaches, give the "
@@ -66,6 +69,12 @@ ProgramArguments parseArgs(int argc, char *argv[]) {
       .scan<'d', int>()
       .default_value(0);
 
+  program.add_argument("--imbed-version")
+      .help("Imbed this tool's version number into the mach_header_64's "
+            "reserved field. Only supports 64 bit images.")
+      .default_value(false)
+      .implicit_value(true);
+
   ProgramArguments args;
   try {
     program.parse_args(argc, argv);
@@ -77,6 +86,7 @@ ProgramArguments parseArgs(int argc, char *argv[]) {
     args.extractImage = program.present<std::string>("--extract");
     args.outputPath = program.present<std::string>("--output");
     args.modulesDisabled.raw = program.get<int>("--skip-modules");
+    args.imbedVersion = program.get<bool>("--imbed-version");
   } catch (const std::runtime_error &err) {
     std::cerr << "Argument parsing error: " << err.what() << std::endl;
     std::exit(1);
@@ -158,6 +168,15 @@ void extractImage(Dyld::Context &dCtx, ProgramArguments args) {
   }
   if (!args.modulesDisabled.fixStubs) {
     Converter::fixStubs<A>(eCtx);
+  }
+  if (args.imbedVersion) {
+    if constexpr (!std::is_same_v<typename A::P, Utils::Pointer64>) {
+      SPDLOG_LOGGER_ERROR(
+          activity.logger,
+          "Unable to imbed version info in a non 64 bit image.");
+    } else {
+      mCtx.header->reserved = DYLDEXTRACTORC_VERSION_DATA;
+    }
   }
   auto writeProcedures = Converter::optimizeOffsets(eCtx);
 

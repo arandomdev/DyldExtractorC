@@ -18,6 +18,8 @@
 #include <Utils/Accelerator.h>
 #include <Utils/ExtractionContext.h>
 
+#include "config.h"
+
 namespace bi = boost::interprocess;
 namespace bp = boost::process;
 namespace fs = std::filesystem;
@@ -30,6 +32,7 @@ struct ProgramArguments {
   bool disableOutput;
   bool verbose;
   unsigned int jobs;
+  bool imbedVersion;
 
   union {
     uint32_t raw;
@@ -53,7 +56,8 @@ struct ProgramArguments {
 };
 
 ProgramArguments parseArgs(int argc, char const *argv[]) {
-  argparse::ArgumentParser program("dyldex_all_multiprocess");
+  argparse::ArgumentParser program("dyldex_all_multiprocess",
+                                   DYLDEXTRACTORC_VERSION);
 
   program.add_argument("cache_path")
       .help("The path to the shared cache. If there are subcaches, give the "
@@ -89,6 +93,12 @@ ProgramArguments parseArgs(int argc, char const *argv[]) {
       .help("Do not use. This is used for multiprocess support.")
       .nargs(5);
 
+  program.add_argument("--imbed-version")
+      .help("Imbed this tool's version number into the mach_header_64's "
+            "reserved field. Only supports 64 bit images.")
+      .default_value(false)
+      .implicit_value(true);
+
   ProgramArguments args;
   try {
     program.parse_args(argc, argv);
@@ -100,6 +110,7 @@ ProgramArguments parseArgs(int argc, char const *argv[]) {
     args.verbose = program.get<bool>("--verbose");
     args.jobs = program.get<unsigned int>("--jobs");
     args.modulesDisabled.raw = program.get<int>("--skip-modules");
+    args.imbedVersion = program.get<bool>("--imbed-version");
 
     if (auto clientSpec =
             program.present<std::vector<std::string>>("--client-spec")) {
@@ -284,6 +295,9 @@ template <class A> void server(ProgramArguments &args, Dyld::Context &dCtx) {
     clientArgsBase.emplace_back("--skip-modules");
     clientArgsBase.push_back(std::to_string(args.modulesDisabled.raw));
   }
+  if (args.imbedVersion) {
+    clientArgsBase.emplace_back("--imbed-version");
+  }
 
   std::string clientArch;
   if constexpr (std::is_same_v<A, Utils::Arch::x86_64>)
@@ -460,6 +474,15 @@ template <class A> int client(ProgramArguments &args) {
     }
     if (!args.modulesDisabled.fixStubs) {
       Converter::fixStubs<A>(eCtx);
+    }
+    if (args.imbedVersion) {
+      if constexpr (!std::is_same_v<typename A::P, Utils::Pointer64>) {
+        SPDLOG_LOGGER_ERROR(
+            activity.logger,
+            "Unable to imbed version info in a non 64 bit image.");
+      } else {
+        mCtx.header->reserved = DYLDEXTRACTORC_VERSION_DATA;
+      }
     }
 
     if (!args.disableOutput) {

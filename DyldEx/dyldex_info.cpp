@@ -6,6 +6,8 @@
 #include <filesystem>
 #include <fmt/core.h>
 
+#include "config.h"
+
 namespace fs = std::filesystem;
 
 struct ProgramArguments {
@@ -16,7 +18,7 @@ struct ProgramArguments {
 };
 
 ProgramArguments parseArgs(int argc, char *argv[]) {
-  argparse::ArgumentParser program("dyldex_info");
+  argparse::ArgumentParser program("dyldex_info", DYLDEXTRACTORC_VERSION);
 
   program.add_argument("cache_path")
       .help("The path to the shared cache. If there are subcaches, give the "

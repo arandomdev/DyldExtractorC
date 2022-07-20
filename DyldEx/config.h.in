@@ -1,0 +1,31 @@
+#ifndef __DYLDEX_CONFIG__
+#define __DYLDEX_CONFIG__
+
+#define DYLDEXTRACTORC_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
+#define DYLDEXTRACTORC_VERSION_MINOR @PROJECT_VERSION_MINOR@
+#define DYLDEXTRACTORC_VERSION_PATCH @PROJECT_VERSION_PATCH@
+
+#define DYLDEXTRACTORC_VERSION "@PROJECT_VERSION@" 
+
+#if DYLDEXTRACTORC_VERSION_MAJOR > 255
+#error "Major version is too high"
+#elif DYLDEXTRACTORC_VERSION_MINOR > 255
+#error "Minor version is too high"
+#elif DYLDEXTRACTORC_VERSION_PATCH > 255
+#error "Patch version is too high"
+#endif
+
+#include <stdint.h>
+/**
+ * 0000     0000 00000000 00000000 00000000
+ * Reserved Type Major    Minor    Patch
+ *
+ * Type
+ *  0 = python
+ *  1 = C++
+ */
+static const uint32_t DYLDEXTRACTORC_VERSION_DATA =
+    (1 << 24) | (DYLDEXTRACTORC_VERSION_MAJOR << 16) |
+    (DYLDEXTRACTORC_VERSION_MINOR << 8) | (DYLDEXTRACTORC_VERSION_PATCH);
+
+#endif // __DYLDEX_CONFIG__
