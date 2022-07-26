@@ -7,3 +7,6 @@
 [submodule "External/fmt"]
 	path = External/fmt
 	url = https://github.com/fmtlib/fmt.git
+[submodule "External/capstone"]
+	path = External/capstone
+	url = https://github.com/capstone-engine/capstone.git

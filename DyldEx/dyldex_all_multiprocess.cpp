@@ -462,8 +462,7 @@ template <class A> int client(ProgramArguments &args) {
     }
 
     auto mCtx = dCtx.createMachoCtx<false, typename A::P>(imageInfo);
-    Utils::ExtractionContext<typename A::P> eCtx(dCtx, mCtx, activity,
-                                                 accelerator);
+    Utils::ExtractionContext<A> eCtx(dCtx, mCtx, activity, accelerator);
 
     // Process image
     if (!args.modulesDisabled.processSlideInfo) {
@@ -473,7 +472,7 @@ template <class A> int client(ProgramArguments &args) {
       Converter::optimizeLinkedit(eCtx);
     }
     if (!args.modulesDisabled.fixStubs) {
-      Converter::fixStubs<A>(eCtx);
+      Converter::fixStubs(eCtx);
     }
     if (args.imbedVersion) {
       if constexpr (!std::is_same_v<typename A::P, Utils::Pointer64>) {

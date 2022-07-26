@@ -141,16 +141,17 @@ public:
   /// Search for a segment
   ///
   /// @param segName The name of the segment.
-  /// @returns The segment context. nullopt if not found.
-  std::optional<SegmentContext<ro, P>> getSegment(const char *segName) const;
+  /// @returns The segment context. nullptr if not found.
+  const SegmentContext<ro, P> *getSegment(const char *segName) const;
 
   /// Search for a section
   ///
   /// @param segName The name of the segment, or nullptr.
   /// @param sectName The name of the section.
-  /// @returns The section structure, or nullptr.
-  SegmentContext<ro, P>::SectionT *getSection(const char *segName,
-                                              const char *sectName) const;
+  /// @returns The segment and the section
+  std::pair<const SegmentContext<ro, P> *,
+            const typename SegmentContext<ro, P>::SectionT *>
+  getSection(const char *segName, const char *sectName) const;
 
   /// Enumerate all segments
   ///

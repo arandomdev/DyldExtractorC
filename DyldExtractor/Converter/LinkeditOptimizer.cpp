@@ -262,11 +262,12 @@ uint32_t StringPool::writeStrings(uint8_t *dest) {
 #pragma endregion StringPool
 
 #pragma region LinkeditOptimizer
-template <class P> class LinkeditOptimizer {
+template <class A> class LinkeditOptimizer {
+  using P = A::P;
   using LinkeditTrackerTag = LinkeditTracker<P>::Tag;
 
 public:
-  LinkeditOptimizer(Utils::ExtractionContext<P> &eCtx);
+  LinkeditOptimizer(Utils::ExtractionContext<A> &eCtx);
 
   void copyBindingInfo(uint8_t *newLinkedit, uint32_t &offset);
   void copyWeakBindingInfo(uint8_t *newLinkedit, uint32_t &offset);
@@ -296,7 +297,7 @@ private:
   uint32_t copyPublicLocalSymbols(uint8_t *newLinkedit, uint32_t &offset);
   uint32_t copyRedactedLocalSymbols(uint8_t *newLinkedit, uint32_t &offset);
 
-  Utils::ExtractionContext<P> &eCtx;
+  Utils::ExtractionContext<A> &eCtx;
   Dyld::Context &dCtx;
   Macho::Context<false, P> &mCtx;
   ActivityLogger &activity;
@@ -318,8 +319,8 @@ private:
   std::map<uint32_t, uint32_t> newSymbolIndicies;
 };
 
-template <class P>
-LinkeditOptimizer<P>::LinkeditOptimizer(Utils::ExtractionContext<P> &eCtx)
+template <class A>
+LinkeditOptimizer<A>::LinkeditOptimizer(Utils::ExtractionContext<A> &eCtx)
     : eCtx(eCtx), dCtx(eCtx.dCtx), mCtx(eCtx.mCtx), activity(eCtx.activity),
       logger(eCtx.logger), linkeditTracker(*eCtx.linkeditTracker) {
   auto &mCtx = eCtx.mCtx.get();
@@ -338,8 +339,8 @@ LinkeditOptimizer<P>::LinkeditOptimizer(Utils::ExtractionContext<P> &eCtx)
           {LC_DYLD_EXPORTS_TRIE});
 }
 
-template <class P>
-void LinkeditOptimizer<P>::copyBindingInfo(uint8_t *newLinkedit,
+template <class A>
+void LinkeditOptimizer<A>::copyBindingInfo(uint8_t *newLinkedit,
                                            uint32_t &offset) {
   if (!dyldInfo) {
     return;
@@ -362,8 +363,8 @@ void LinkeditOptimizer<P>::copyBindingInfo(uint8_t *newLinkedit,
   activity.update();
 }
 
-template <class P>
-void LinkeditOptimizer<P>::copyWeakBindingInfo(uint8_t *newLinkedit,
+template <class A>
+void LinkeditOptimizer<A>::copyWeakBindingInfo(uint8_t *newLinkedit,
                                                uint32_t &offset) {
   if (!dyldInfo) {
     return;
@@ -388,8 +389,8 @@ void LinkeditOptimizer<P>::copyWeakBindingInfo(uint8_t *newLinkedit,
   activity.update();
 }
 
-template <class P>
-void LinkeditOptimizer<P>::copyLazyBindingInfo(uint8_t *newLinkedit,
+template <class A>
+void LinkeditOptimizer<A>::copyLazyBindingInfo(uint8_t *newLinkedit,
                                                uint32_t &offset) {
   if (!dyldInfo) {
     return;
@@ -414,8 +415,8 @@ void LinkeditOptimizer<P>::copyLazyBindingInfo(uint8_t *newLinkedit,
   activity.update();
 }
 
-template <class P>
-void LinkeditOptimizer<P>::copyExportInfo(uint8_t *newLinkedit,
+template <class A>
+void LinkeditOptimizer<A>::copyExportInfo(uint8_t *newLinkedit,
                                           uint32_t &offset) {
   if (!exportTrieCmd && !dyldInfo) {
     return;
@@ -453,14 +454,14 @@ void LinkeditOptimizer<P>::copyExportInfo(uint8_t *newLinkedit,
   activity.update();
 }
 
-template <class P>
-void LinkeditOptimizer<P>::startSymbolEntries(uint8_t *newLinkedit,
+template <class A>
+void LinkeditOptimizer<A>::startSymbolEntries(uint8_t *newLinkedit,
                                               uint32_t &offset) {
   newSymbolEntriesStart = offset;
 }
 
-template <class P>
-void LinkeditOptimizer<P>::searchRedactedSymbol(uint8_t *newLinkedit,
+template <class A>
+void LinkeditOptimizer<A>::searchRedactedSymbol(uint8_t *newLinkedit,
                                                 uint32_t &offset) {
   activity.update(std::nullopt, "Searching for redacted symbols");
 
@@ -484,8 +485,8 @@ void LinkeditOptimizer<P>::searchRedactedSymbol(uint8_t *newLinkedit,
   offset += sizeof(Macho::Loader::nlist<P>);
 }
 
-template <class P>
-void LinkeditOptimizer<P>::copyLocalSymbols(uint8_t *newLinkedit,
+template <class A>
+void LinkeditOptimizer<A>::copyLocalSymbols(uint8_t *newLinkedit,
                                             uint32_t &offset) {
   activity.update(std::nullopt, "Copying local symbols");
 
@@ -499,8 +500,8 @@ void LinkeditOptimizer<P>::copyLocalSymbols(uint8_t *newLinkedit,
   }
 }
 
-template <class P>
-void LinkeditOptimizer<P>::copyExportedSymbols(uint8_t *newLinkedit,
+template <class A>
+void LinkeditOptimizer<A>::copyExportedSymbols(uint8_t *newLinkedit,
                                                uint32_t &offset) {
   activity.update(std::nullopt, "Copying exported symbols");
 
@@ -540,8 +541,8 @@ void LinkeditOptimizer<P>::copyExportedSymbols(uint8_t *newLinkedit,
   offset += sizeof(Macho::Loader::nlist<P>) * newExportedSymbolsCount;
 }
 
-template <class P>
-void LinkeditOptimizer<P>::copyImportedSymbols(uint8_t *newLinkedit,
+template <class A>
+void LinkeditOptimizer<A>::copyImportedSymbols(uint8_t *newLinkedit,
                                                uint32_t &offset) {
   activity.update(std::nullopt, "Copying imported symbols");
 
@@ -581,8 +582,8 @@ void LinkeditOptimizer<P>::copyImportedSymbols(uint8_t *newLinkedit,
   offset += sizeof(Macho::Loader::nlist<P>) * newImportedSymbolsCount;
 }
 
-template <class P>
-void LinkeditOptimizer<P>::endSymbolEntries(uint8_t *newLinkedit,
+template <class A>
+void LinkeditOptimizer<A>::endSymbolEntries(uint8_t *newLinkedit,
                                             uint32_t &offset) {
   if (!symTab) {
     return;
@@ -600,8 +601,8 @@ void LinkeditOptimizer<P>::endSymbolEntries(uint8_t *newLinkedit,
   symTab->nsyms = symbolsCount;
 }
 
-template <class P>
-void LinkeditOptimizer<P>::copyFunctionStarts(uint8_t *newLinkedit,
+template <class A>
+void LinkeditOptimizer<A>::copyFunctionStarts(uint8_t *newLinkedit,
                                               uint32_t &offset) {
   auto functionStarts =
       mCtx.getLoadCommand<false, Macho::Loader::linkedit_data_command>(
@@ -628,8 +629,8 @@ void LinkeditOptimizer<P>::copyFunctionStarts(uint8_t *newLinkedit,
   activity.update();
 }
 
-template <class P>
-void LinkeditOptimizer<P>::copyDataInCode(uint8_t *newLinkedit,
+template <class A>
+void LinkeditOptimizer<A>::copyDataInCode(uint8_t *newLinkedit,
                                           uint32_t &offset) {
   auto dataInCode =
       mCtx.getLoadCommand<false, Macho::Loader::linkedit_data_command>(
@@ -656,8 +657,8 @@ void LinkeditOptimizer<P>::copyDataInCode(uint8_t *newLinkedit,
   activity.update();
 }
 
-template <class P>
-void LinkeditOptimizer<P>::copyIndirectSymbolTable(uint8_t *newLinkedit,
+template <class A>
+void LinkeditOptimizer<A>::copyIndirectSymbolTable(uint8_t *newLinkedit,
                                                    uint32_t &offset) {
   if (!dySymTab) {
     return;
@@ -692,8 +693,8 @@ void LinkeditOptimizer<P>::copyIndirectSymbolTable(uint8_t *newLinkedit,
   offset += size;
 }
 
-template <class P>
-void LinkeditOptimizer<P>::copyStringPool(uint8_t *newLinkedit,
+template <class A>
+void LinkeditOptimizer<A>::copyStringPool(uint8_t *newLinkedit,
                                           uint32_t &offset) {
   activity.update(std::nullopt, "Copying string pool");
 
@@ -712,17 +713,18 @@ void LinkeditOptimizer<P>::copyStringPool(uint8_t *newLinkedit,
   offset += size;
 }
 
-template <class P>
-void LinkeditOptimizer<P>::updateLoadCommands(uint32_t &offset) {
+template <class A>
+void LinkeditOptimizer<A>::updateLoadCommands(uint32_t &offset) {
   // update segment
   auto linkeditSeg = mCtx.getSegment("__LINKEDIT")->command;
   linkeditSeg->vmsize = offset;
   linkeditSeg->filesize = offset;
 }
 
-template <class P>
-std::tuple<Macho::Loader::nlist<P> *, Macho::Loader::nlist<P> *>
-LinkeditOptimizer<P>::findLocalSymbolEntries(
+template <class A>
+std::tuple<Macho::Loader::nlist<typename A::P> *,
+           Macho::Loader::nlist<typename A::P> *>
+LinkeditOptimizer<A>::findLocalSymbolEntries(
     const Dyld::Context *symbolsCache,
     dyld_cache_local_symbols_info *symbolsInfo) {
   // Search local symbol entries for the macho context.
@@ -775,8 +777,8 @@ LinkeditOptimizer<P>::findLocalSymbolEntries(
                          (Macho::Loader::nlist<P> *)nlistStart + nlistCount);
 }
 
-template <class P>
-uint32_t LinkeditOptimizer<P>::copyPublicLocalSymbols(uint8_t *newLinkedit,
+template <class A>
+uint32_t LinkeditOptimizer<A>::copyPublicLocalSymbols(uint8_t *newLinkedit,
                                                       uint32_t &offset) {
   if (!dySymTab || !dySymTab->nlocalsym) {
     return 0;
@@ -809,8 +811,8 @@ uint32_t LinkeditOptimizer<P>::copyPublicLocalSymbols(uint8_t *newLinkedit,
   return newLocalSymbolsCount;
 }
 
-template <class P>
-uint32_t LinkeditOptimizer<P>::copyRedactedLocalSymbols(uint8_t *newLinkedit,
+template <class A>
+uint32_t LinkeditOptimizer<A>::copyRedactedLocalSymbols(uint8_t *newLinkedit,
                                                         uint32_t &offset) {
   auto symbolsCache = dCtx.getSymbolsCache();
   if (!symbolsCache || !symbolsCache->header->localSymbolsOffset) {
@@ -848,7 +850,7 @@ uint32_t LinkeditOptimizer<P>::copyRedactedLocalSymbols(uint8_t *newLinkedit,
 #pragma endregion LinkeditOptimizer
 
 /// Check all load commands for unknown load commands
-template <class P> void checkLoadCommands(Utils::ExtractionContext<P> &eCtx) {
+template <class A> void checkLoadCommands(Utils::ExtractionContext<A> &eCtx) {
   for (auto lc : eCtx.mCtx.get().loadCommands) {
     switch (lc->cmd) {
     case LC_SEGMENT:    // segment_command
@@ -929,11 +931,11 @@ bool Converter::isRedactedIndirect(uint32_t entry) {
          entry & INDIRECT_SYMBOL_ABS;
 }
 
-template <class P>
-void Converter::optimizeLinkedit(Utils::ExtractionContext<P> &eCtx) {
+template <class A>
+void Converter::optimizeLinkedit(Utils::ExtractionContext<A> &eCtx) {
   eCtx.activity.get().update("Linkedit Optimizer", "Optimizing Linkedit");
   checkLoadCommands(eCtx);
-  eCtx.linkeditTracker = new LinkeditTracker<P>(eCtx.mCtx);
+  eCtx.linkeditTracker = new LinkeditTracker<typename A::P>(eCtx.mCtx);
   auto &mCtx = eCtx.mCtx.get();
 
   auto linkeditSeg = mCtx.getSegment("__LINKEDIT");
@@ -944,7 +946,7 @@ void Converter::optimizeLinkedit(Utils::ExtractionContext<P> &eCtx) {
   uint32_t offset = 0;
   uint8_t *newLinkedit = (uint8_t *)calloc(linkeditSeg->command->vmsize, 1);
 
-  LinkeditOptimizer<P> optimizer = LinkeditOptimizer<P>(eCtx);
+  LinkeditOptimizer<A> optimizer = LinkeditOptimizer<A>(eCtx);
   optimizer.copyBindingInfo(newLinkedit, offset);
   optimizer.copyWeakBindingInfo(newLinkedit, offset);
   optimizer.copyLazyBindingInfo(newLinkedit, offset);
@@ -971,7 +973,11 @@ void Converter::optimizeLinkedit(Utils::ExtractionContext<P> &eCtx) {
   return;
 }
 
-template void Converter::optimizeLinkedit<Utils::Pointer32>(
-    Utils::ExtractionContext<Utils::Pointer32> &eCtx);
-template void Converter::optimizeLinkedit<Utils::Pointer64>(
-    Utils::ExtractionContext<Utils::Pointer64> &eCtx);
+#define X(T)                                                                   \
+  template void Converter::optimizeLinkedit<T>(Utils::ExtractionContext<T> &   \
+                                               eCtx);
+X(Utils::Arch::x86_64)
+X(Utils::Arch::arm)
+X(Utils::Arch::arm64)
+X(Utils::Arch::arm64_32)
+#undef X

@@ -145,7 +145,7 @@ Context<ro, P>::FileT *Context<ro, P>::convertAddrP(uint64_t addr) const {
 }
 
 template <bool ro, class P>
-std::optional<SegmentContext<ro, P>>
+const SegmentContext<ro, P> *
 Context<ro, P>::getSegment(const char *segName) const {
   auto nameSize = strlen(segName) + 1;
   if (nameSize > 16) {
@@ -154,15 +154,16 @@ Context<ro, P>::getSegment(const char *segName) const {
 
   for (auto &seg : segments) {
     if (memcmp(segName, seg.command->segname, nameSize) == 0) {
-      return seg;
+      return &seg;
     }
   }
 
-  return std::nullopt;
+  return nullptr;
 }
 
 template <bool ro, class P>
-SegmentContext<ro, P>::SectionT *
+std::pair<const SegmentContext<ro, P> *,
+          const typename SegmentContext<ro, P>::SectionT *>
 Context<ro, P>::getSection(const char *segName, const char *sectName) const {
   std::size_t segSize = 0;
   if (segName != nullptr) {
@@ -181,13 +182,13 @@ Context<ro, P>::getSection(const char *segName, const char *sectName) const {
     if (segSize == 0 || memcmp(segName, seg.command->segname, segSize) == 0) {
       for (auto sect : seg.sections) {
         if (memcmp(sectName, sect->sectname, sectSize) == 0) {
-          return sect;
+          return std::make_pair(&seg, sect);
         }
       }
     }
   }
 
-  return nullptr;
+  return std::make_pair(nullptr, nullptr);
 }
 
 template <bool ro, class P>

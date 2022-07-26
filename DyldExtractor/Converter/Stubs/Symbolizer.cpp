@@ -4,19 +4,19 @@
 
 using namespace Converter;
 
-template <class P>
-Symbolizer<P>::Symbolizer(const Utils::ExtractionContext<P> &eCtx)
+template <class A>
+Symbolizer<A>::Symbolizer(const Utils::ExtractionContext<A> &eCtx)
     : dCtx(eCtx.dCtx), mCtx(eCtx.mCtx), activity(eCtx.activity),
       logger(eCtx.logger), accelerator(eCtx.accelerator) {}
 
-template <class P> void Symbolizer<P>::enumerate() {
+template <class A> void Symbolizer<A>::enumerate() {
   activity.update(std::nullopt, "Enumerating Symbols");
   enumerateExports();
   enumerateSymbols();
 }
 
-template <class P>
-const SymbolicInfo *Symbolizer<P>::symbolizeAddr(uint64_t addr) const {
+template <class A>
+const SymbolicInfo *Symbolizer<A>::symbolizeAddr(uint64_t addr) const {
   if (symbols.contains(addr)) {
     return &symbols.at(addr);
   } else {
@@ -24,7 +24,7 @@ const SymbolicInfo *Symbolizer<P>::symbolizeAddr(uint64_t addr) const {
   }
 }
 
-template <class P> void Symbolizer<P>::enumerateExports() {
+template <class A> void Symbolizer<A>::enumerateExports() {
   // Populate accelerator's pathToImage if needed
   if (accelerator.pathToImage.empty()) {
     for (auto image : dCtx.images) {
@@ -48,7 +48,7 @@ template <class P> void Symbolizer<P>::enumerateExports() {
   }
 }
 
-template <class P> void Symbolizer<P>::enumerateSymbols() {
+template <class A> void Symbolizer<A>::enumerateSymbols() {
   auto linkeditFile =
       mCtx.convertAddr(mCtx.getSegment("__LINKEDIT")->command->vmaddr).second;
   auto symtab = mCtx.getLoadCommand<false, Macho::Loader::symtab_command>();
@@ -68,17 +68,12 @@ template <class P> void Symbolizer<P>::enumerateSymbols() {
             {addr, SymbolicInfo::Symbol{strings + symbol->n_un.n_strx, 0,
                                         std::nullopt}});
       }
-
-      // TODO: REMOVE
-      if (addr == 0) {
-        SPDLOG_LOGGER_DEBUG(logger, "Found null symbol");
-      }
     }
   }
 }
 
-template <class P>
-Symbolizer<P>::EntryMapT &Symbolizer<P>::processDylibCmd(
+template <class A>
+Symbolizer<A>::EntryMapT &Symbolizer<A>::processDylibCmd(
     const Macho::Loader::dylib_command *dylibCmd) const {
   const std::string dylibPath(
       (char *)((uint8_t *)dylibCmd + dylibCmd->dylib.name.offset));
@@ -113,7 +108,6 @@ Symbolizer<P>::EntryMapT &Symbolizer<P>::processDylibCmd(
     if (e.info.flags & EXPORT_SYMBOL_FLAGS_STUB_AND_RESOLVER) {
       // The address points to the stub, while "other" points
       // to the function itself. Add the function as well.
-      // TODO: We might need to add a reference to stub addr.
       const auto fAddr = imageInfo->address + e.info.other;
       exportsMap.emplace(fAddr, e);
     }
@@ -163,10 +157,10 @@ Symbolizer<P>::EntryMapT &Symbolizer<P>::processDylibCmd(
   return exportsMap;
 }
 
-template <class P>
-std::vector<ExportInfoTrie::Entry>
-Symbolizer<P>::readExports(const std::string &dylibPath,
-                           const Macho::Context<true, P> &dylibCtx) const {
+template <class A>
+std::vector<ExportInfoTrie::Entry> Symbolizer<A>::readExports(
+    const std::string &dylibPath,
+    const Macho::Context<true, typename A::P> &dylibCtx) const {
   // read exports
   std::vector<ExportInfoTrie::Entry> exports;
   const uint8_t *exportsStart;
@@ -199,5 +193,7 @@ Symbolizer<P>::readExports(const std::string &dylibPath,
   return exports;
 }
 
-template class Symbolizer<Utils::Pointer32>;
-template class Symbolizer<Utils::Pointer64>;
+template class Symbolizer<Utils::Arch::x86_64>;
+template class Symbolizer<Utils::Arch::arm>;
+template class Symbolizer<Utils::Arch::arm64>;
+template class Symbolizer<Utils::Arch::arm64_32>;

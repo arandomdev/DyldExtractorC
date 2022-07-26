@@ -45,8 +45,14 @@ add_subdirectory(External/fmt)
 add_compile_definitions(SPDLOG_ACTIVE_LEVEL=0) # Allow all logging, define at runtime
 add_subdirectory(External/spdlog)
 
-set(ARGPARSE_LONG_VERSION_ARG_ONLY ON CACHE BOOL "Remove short version flag from argparse" FORCE)
+set(ARGPARSE_LONG_VERSION_ARG_ONLY ON)
 add_subdirectory(External/argparse)
+
+set(CAPSTONE_ARCHITECTURE_DEFAULT OFF)
+set(CAPSTONE_ARM_SUPPORT ON)
+set(CAPSTONE_ARM64_SUPPORT ON)
+add_subdirectory(External/capstone)
+set_target_properties(capstone PROPERTIES COMPILE_OPTIONS "-w")
 
 # Include sub-projects.
 add_subdirectory(DyldExtractor)

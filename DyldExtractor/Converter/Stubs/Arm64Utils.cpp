@@ -2,8 +2,8 @@
 
 using namespace Converter;
 
-template <class P>
-Arm64Utils<P>::Arm64Utils(const Utils::ExtractionContext<P> &eCtx)
+template <class A>
+Arm64Utils<A>::Arm64Utils(const Utils::ExtractionContext<A> &eCtx)
     : dCtx(eCtx.dCtx), ptrTracker(eCtx.pointerTracker),
       accelerator(eCtx.accelerator) {
 
@@ -21,7 +21,7 @@ Arm64Utils<P>::Arm64Utils(const Utils::ExtractionContext<P> &eCtx)
       {StubFormat::Resolver, [this](PtrT a) { return getResolverTarget(a); }}};
 }
 
-template <class P> bool Arm64Utils<P>::isStubBinder(const PtrT addr) const {
+template <class A> bool Arm64Utils<A>::isStubBinder(const PtrT addr) const {
   /**
    *  adrp  x17,0x1cb662000
    *  add   x17,x17,#0x2f8
@@ -52,9 +52,9 @@ template <class P> bool Arm64Utils<P>::isStubBinder(const PtrT addr) const {
   }
 }
 
-template <class P>
-std::optional<typename Arm64Utils<P>::ResolverData>
-Arm64Utils<P>::getResolverData(const PtrT addr) const {
+template <class A>
+std::optional<typename Arm64Utils<A>::ResolverData>
+Arm64Utils<A>::getResolverData(const PtrT addr) const {
   /**
    * fd 7b bf a9  stp     x29,x30,[sp, #local_10]!
    * fd 03 00 91  mov     x29,sp
@@ -169,10 +169,10 @@ Arm64Utils<P>::getResolverData(const PtrT addr) const {
   return ResolverData{blResult, strResult, size};
 }
 
-template <class P>
+template <class A>
 std::optional<
-    std::pair<typename Arm64Utils<P>::PtrT, typename Arm64Utils<P>::StubFormat>>
-Arm64Utils<P>::resolveStub(const PtrT addr) const {
+    std::pair<typename Arm64Utils<A>::PtrT, typename Arm64Utils<A>::StubFormat>>
+Arm64Utils<A>::resolveStub(const PtrT addr) const {
   for (auto &[format, resolver] : stubResolvers) {
     if (auto res = resolver(addr); res != std::nullopt) {
       return std::make_pair(*res, format);
@@ -182,8 +182,8 @@ Arm64Utils<P>::resolveStub(const PtrT addr) const {
   return std::nullopt;
 }
 
-template <class P>
-Arm64Utils<P>::PtrT Arm64Utils<P>::resolveStubChain(const PtrT addr) {
+template <class A>
+Arm64Utils<A>::PtrT Arm64Utils<A>::resolveStubChain(const PtrT addr) {
   if (accelerator.arm64ResolvedChains.contains(addr)) {
     return accelerator.arm64ResolvedChains[addr];
   }
@@ -202,9 +202,9 @@ Arm64Utils<P>::PtrT Arm64Utils<P>::resolveStubChain(const PtrT addr) {
   return target;
 }
 
-template <class P>
-std::optional<typename Arm64Utils<P>::PtrT>
-Arm64Utils<P>::getStubHelperData(const PtrT addr) const {
+template <class A>
+std::optional<typename Arm64Utils<A>::PtrT>
+Arm64Utils<A>::getStubHelperData(const PtrT addr) const {
   auto p = (const uint32_t *)dCtx.convertAddrP(addr);
   if (p == nullptr) {
     return std::nullopt;
@@ -220,9 +220,9 @@ Arm64Utils<P>::getStubHelperData(const PtrT addr) const {
   return p[2];
 }
 
-template <class P>
-std::optional<typename Arm64Utils<P>::PtrT>
-Arm64Utils<P>::getStubLdrAddr(const PtrT addr) const {
+template <class A>
+std::optional<typename Arm64Utils<A>::PtrT>
+Arm64Utils<A>::getStubLdrAddr(const PtrT addr) const {
   const auto p = (const uint32_t *)dCtx.convertAddrP(addr);
   if (p == nullptr) {
     return std::nullopt;
@@ -248,9 +248,9 @@ Arm64Utils<P>::getStubLdrAddr(const PtrT addr) const {
   return adrpResult + offset;
 }
 
-template <class P>
-std::optional<typename Arm64Utils<P>::PtrT>
-Arm64Utils<P>::getAuthStubLdrAddr(const PtrT addr) const {
+template <class A>
+std::optional<typename Arm64Utils<A>::PtrT>
+Arm64Utils<A>::getAuthStubLdrAddr(const PtrT addr) const {
   const auto p = (const uint32_t *)dCtx.convertAddrP(addr);
   if (p == nullptr) {
     return std::nullopt;
@@ -281,8 +281,8 @@ Arm64Utils<P>::getAuthStubLdrAddr(const PtrT addr) const {
   return addResult + ldrOffset;
 }
 
-template <class P>
-void Arm64Utils<P>::writeNormalStub(uint8_t *loc, const PtrT stubAddr,
+template <class A>
+void Arm64Utils<A>::writeNormalStub(uint8_t *loc, const PtrT stubAddr,
                                     const PtrT ldrAddr) const {
   auto instructions = (uint32_t *)loc;
 
@@ -308,8 +308,8 @@ void Arm64Utils<P>::writeNormalStub(uint8_t *loc, const PtrT stubAddr,
   instructions[2] = 0xD61F0200;
 }
 
-template <class P>
-void Arm64Utils<P>::writeNormalAuthStub(uint8_t *loc, const PtrT stubAddr,
+template <class A>
+void Arm64Utils<A>::writeNormalAuthStub(uint8_t *loc, const PtrT stubAddr,
                                         const PtrT ldrAddr) const {
   auto instructions = (uint32_t *)loc;
 
@@ -331,9 +331,9 @@ void Arm64Utils<P>::writeNormalAuthStub(uint8_t *loc, const PtrT stubAddr,
   instructions[3] = 0xD71F0A11;
 }
 
-template <class P>
-std::optional<typename Arm64Utils<P>::PtrT>
-Arm64Utils<P>::getStubNormalTarget(const PtrT addr) const {
+template <class A>
+std::optional<typename Arm64Utils<A>::PtrT>
+Arm64Utils<A>::getStubNormalTarget(const PtrT addr) const {
   /**
    * ADRP x16, page
    * LDR x16, [x16, pageoff] -> [Symbol pointer]
@@ -366,9 +366,9 @@ Arm64Utils<P>::getStubNormalTarget(const PtrT addr) const {
   return ptrTracker.slideP(ldrTarget);
 }
 
-template <class P>
-std::optional<typename Arm64Utils<P>::PtrT>
-Arm64Utils<P>::getStubOptimizedTarget(const PtrT addr) const {
+template <class A>
+std::optional<typename Arm64Utils<A>::PtrT>
+Arm64Utils<A>::getStubOptimizedTarget(const PtrT addr) const {
   /**
    * ADRP x16, page
    * ADD x16, x16, offset
@@ -400,9 +400,9 @@ Arm64Utils<P>::getStubOptimizedTarget(const PtrT addr) const {
   return adrpResult + imm12;
 }
 
-template <class P>
-std::optional<typename Arm64Utils<P>::PtrT>
-Arm64Utils<P>::getAuthStubNormalTarget(const PtrT addr) const {
+template <class A>
+std::optional<typename Arm64Utils<A>::PtrT>
+Arm64Utils<A>::getAuthStubNormalTarget(const PtrT addr) const {
   /**
    * 91 59 11 90  adrp    x17,0x1e27e5000
    * 31 22 0d 91  add     x17,x17,#0x348
@@ -441,9 +441,9 @@ Arm64Utils<P>::getAuthStubNormalTarget(const PtrT addr) const {
   return ptrTracker.slideP(ldrTarget);
 }
 
-template <class P>
-std::optional<typename Arm64Utils<P>::PtrT>
-Arm64Utils<P>::getAuthStubOptimizedTarget(const PtrT addr) const {
+template <class A>
+std::optional<typename Arm64Utils<A>::PtrT>
+Arm64Utils<A>::getAuthStubOptimizedTarget(const PtrT addr) const {
   /**
    * 1bfcb5d20 30 47 e2 90  adrp  x16,0x184599000
    * 1bfcb5d24 10 62 30 91  add   x16,x16,#0xc18
@@ -476,9 +476,9 @@ Arm64Utils<P>::getAuthStubOptimizedTarget(const PtrT addr) const {
   return adrpResult + imm12;
 }
 
-template <class P>
-std::optional<typename Arm64Utils<P>::PtrT>
-Arm64Utils<P>::getAuthStubResolverTarget(const PtrT addr) const {
+template <class A>
+std::optional<typename Arm64Utils<A>::PtrT>
+Arm64Utils<A>::getAuthStubResolverTarget(const PtrT addr) const {
   /**
    * 70 e6 26 b0  adrp    x16,0x1e38ba000
    * 10 e6 41 f9  ldr     x16,[x16, #0x3c8]
@@ -511,9 +511,9 @@ Arm64Utils<P>::getAuthStubResolverTarget(const PtrT addr) const {
   return ptrTracker.slideP(ldrTarget);
 }
 
-template <class P>
-std::optional<typename Arm64Utils<P>::PtrT>
-Arm64Utils<P>::getResolverTarget(const PtrT addr) const {
+template <class A>
+std::optional<typename Arm64Utils<A>::PtrT>
+Arm64Utils<A>::getResolverTarget(const PtrT addr) const {
   // get the resolver target and strip away the size
   if (auto res = getResolverData(addr); res != std::nullopt) {
     return res->targetFunc;
@@ -522,11 +522,13 @@ Arm64Utils<P>::getResolverTarget(const PtrT addr) const {
   }
 }
 
-template <class P>
-typename Arm64Utils<P>::PtrT Arm64Utils<P>::getLdrOffset(const uint32_t ldrI) {
+template <class A>
+typename Arm64Utils<A>::PtrT Arm64Utils<A>::getLdrOffset(const uint32_t ldrI) {
   int scale = ldrI >> 30;
   return (ldrI & 0x3FFC00) >> (10 - scale);
 }
 
-template class Arm64Utils<Utils::Pointer32>;
-template class Arm64Utils<Utils::Pointer64>;
+template class Arm64Utils<Utils::Arch::x86_64>;
+template class Arm64Utils<Utils::Arch::arm>;
+template class Arm64Utils<Utils::Arch::arm64>;
+template class Arm64Utils<Utils::Arch::arm64_32>;

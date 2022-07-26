@@ -5,6 +5,7 @@
 #include <Dyld/Context.h>
 #include <Logger/ActivityLogger.h>
 #include <Macho/Context.h>
+#include <Provider/Disassembler.h>
 #include <Provider/PointerTracker.h>
 #include <spdlog/logger.h>
 
@@ -16,7 +17,9 @@ template <class P> class Symbolizer;
 namespace Utils {
 template <class P> class Accelerator;
 
-template <class P> class ExtractionContext {
+template <class A> class ExtractionContext {
+  using P = A::P;
+
 public:
   std::reference_wrapper<Dyld::Context> dCtx;
   std::reference_wrapper<Macho::Context<false, P>> mCtx;
@@ -25,9 +28,10 @@ public:
   std::reference_wrapper<Accelerator<P>> accelerator;
 
   Provider::PointerTracker<P> pointerTracker;
+  Provider::Disassembler<A> disassembler;
 
   Converter::LinkeditTracker<P> *linkeditTracker = nullptr;
-  Converter::Symbolizer<P> *symbolizer = nullptr;
+  Converter::Symbolizer<A> *symbolizer = nullptr;
 
   // Linkedit optimizer guarantees that undefined symbols are added last in the
   // symtab.
@@ -35,10 +39,10 @@ public:
 
   ExtractionContext(Dyld::Context &dCtx, Macho::Context<false, P> &mCtx,
                     ActivityLogger &activity, Accelerator<P> &accelerator);
-  ExtractionContext(const ExtractionContext<P> &other) = delete;
-  ExtractionContext(ExtractionContext<P> &&other);
-  ExtractionContext &operator=(const ExtractionContext<P> &other) = delete;
-  ExtractionContext &operator=(ExtractionContext<P> &&other);
+  ExtractionContext(const ExtractionContext<A> &other) = delete;
+  ExtractionContext(ExtractionContext<A> &&other);
+  ExtractionContext &operator=(const ExtractionContext<A> &other) = delete;
+  ExtractionContext &operator=(ExtractionContext<A> &&other);
   ~ExtractionContext();
 };
 

@@ -156,8 +156,7 @@ void extractImage(Dyld::Context &dCtx, ProgramArguments args) {
 
   auto mCtx = dCtx.createMachoCtx<false, typename A::P>(imageInfo);
   Utils::Accelerator<typename A::P> accelerator;
-  Utils::ExtractionContext<typename A::P> eCtx(dCtx, mCtx, activity,
-                                               accelerator);
+  Utils::ExtractionContext<A> eCtx(dCtx, mCtx, activity, accelerator);
 
   // Convert
   if (!args.modulesDisabled.processSlideInfo) {
@@ -167,7 +166,7 @@ void extractImage(Dyld::Context &dCtx, ProgramArguments args) {
     Converter::optimizeLinkedit(eCtx);
   }
   if (!args.modulesDisabled.fixStubs) {
-    Converter::fixStubs<A>(eCtx);
+    Converter::fixStubs(eCtx);
   }
   if (args.imbedVersion) {
     if constexpr (!std::is_same_v<typename A::P, Utils::Pointer64>) {

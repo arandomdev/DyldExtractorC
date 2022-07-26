@@ -7,10 +7,6 @@
 #include <stdint.h>
 #include <vector>
 
-namespace Utils {
-template <class P> class ExtractionContext;
-}; // namespace Utils
-
 namespace Provider {
 
 template <class P> class PointerTracker {
@@ -44,7 +40,12 @@ public:
     bool containsData(const uint8_t *addr) const;
   };
 
-  PointerTracker(const Utils::ExtractionContext<P> &eCtx);
+  PointerTracker(Dyld::Context &dCtx, std::shared_ptr<spdlog::logger> logger);
+  PointerTracker(const PointerTracker &o) = delete;
+  PointerTracker(PointerTracker &&o) = default;
+  PointerTracker &operator=(const PointerTracker &o) = delete;
+  PointerTracker &operator=(PointerTracker &&o) = default;
+  ~PointerTracker() = default;
 
   /// Slide the pointer at the address
   ///

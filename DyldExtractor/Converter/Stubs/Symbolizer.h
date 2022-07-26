@@ -6,9 +6,11 @@
 
 namespace Converter {
 
-template <class P> class Symbolizer {
+template <class A> class Symbolizer {
+  using P = A::P;
+
 public:
-  Symbolizer(const Utils::ExtractionContext<P> &eCtx);
+  Symbolizer(const Utils::ExtractionContext<A> &eCtx);
 
   void enumerate();
   const SymbolicInfo *symbolizeAddr(uint64_t addr) const;
@@ -23,7 +25,7 @@ private:
   processDylibCmd(const Macho::Loader::dylib_command *dylibCmd) const;
   std::vector<ExportInfoTrie::Entry>
   readExports(const std::string &dylibPath,
-              const Macho::Context<true, P> &dylibCtx) const;
+              const Macho::Context<true, typename A::P> &dylibCtx) const;
 
   const Dyld::Context &dCtx;
   Macho::Context<false, P> &mCtx;

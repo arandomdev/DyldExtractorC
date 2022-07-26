@@ -6,7 +6,8 @@
 
 namespace Converter {
 
-template <class P> class Arm64Utils {
+template <class A> class Arm64Utils {
+  using P = A::P;
   using PtrT = P::PtrT;
   using SPtrT = P::SPtrT;
 
@@ -32,7 +33,7 @@ public:
     PtrT size;
   };
 
-  Arm64Utils(const Utils::ExtractionContext<P> &eCtx);
+  Arm64Utils(const Utils::ExtractionContext<A> &eCtx);
 
   /// Check if it is a stub binder
   ///
@@ -46,8 +47,7 @@ public:
   /// should be in the same image.
   ///
   /// @param addr The address of the resolver
-  /// @returns An optional pair that contains the target of the resolver and
-  ///     the size of the resolver in bytes.
+  /// @returns Optional resolver data
   std::optional<ResolverData> getResolverData(const PtrT addr) const;
 
   /// Get a stub's target and its format
@@ -114,7 +114,7 @@ private:
 
   const Dyld::Context &dCtx;
   Utils::Accelerator<P> &accelerator;
-  const Provider::PointerTracker<P> ptrTracker;
+  const Provider::PointerTracker<P> &ptrTracker;
 
   using ResolverT = typename std::function<std::optional<PtrT>(PtrT)>;
   std::map<StubFormat, ResolverT> stubResolvers;

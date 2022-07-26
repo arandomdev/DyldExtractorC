@@ -322,7 +322,7 @@ template <class A> void Arm64Fixer<A>::fix() {
 template <class A> void Arm64Fixer<A>::fixStubHelpers() {
   static const PtrT REG_HELPER_SIZE = 0xC;
 
-  const auto helperSect = mCtx.getSection("__TEXT", "__stub_helper");
+  const auto helperSect = mCtx.getSection("__TEXT", "__stub_helper").second;
   if (!helperSect) {
     return;
   }
@@ -506,6 +506,7 @@ template <class A> void Arm64Fixer<A>::fixPass1() {
         } else if (pointerCache.isAvailable(SPointerType::normal, pAddr)) {
           // Mark the pointer as used
           pointerCache.used.normal.insert(pAddr);
+          *(PtrT *)mCtx.convertAddrP(pAddr) = 0;
           fixed = true;
         } else if (pointerCache.unnamed.lazy.contains(pAddr)) {
           // Name the pointer and mark as used
@@ -516,6 +517,7 @@ template <class A> void Arm64Fixer<A>::fixPass1() {
           // Name the pointer and mark as used
           pointerCache.namePointer(SPointerType::normal, pAddr, sSymbols);
           pointerCache.used.normal.insert(pAddr);
+          *(PtrT *)mCtx.convertAddrP(pAddr) = 0;
           fixed = true;
         } else {
           SPDLOG_LOGGER_WARN(
@@ -710,7 +712,7 @@ template <class A> void Arm64Fixer<A>::fixPass2() {
 template <class A> void Arm64Fixer<A>::fixCallsites() {
   activity.update(std::nullopt, "Fixing Callsites");
 
-  const auto textSect = mCtx.getSection("__TEXT", "__text");
+  const auto textSect = mCtx.getSection("__TEXT", "__text").second;
   if (textSect == nullptr) {
     SPDLOG_LOGGER_WARN(logger, "Unable to find text section");
     return;
@@ -793,13 +795,436 @@ template <class A> void Arm64Fixer<A>::fixCallsites() {
 }
 #pragma endregion Arm64Fixer
 
+#pragma region ArmFixer
+ArmFixer::ArmFixer(StubFixer<A> &delegate)
+    : delegate(delegate), mCtx(delegate.mCtx), activity(delegate.activity),
+      logger(delegate.logger), disasm(delegate.disasm),
+      symbolizer(delegate.symbolizer), pointerCache(delegate.pointerCache),
+      armUtils(*delegate.armUtils) {}
+
+void ArmFixer::fix() {
+  fixStubHelpers();
+  scanStubs();
+  fixPass1();
+  fixPass2();
+  fixCallsites();
+}
+
+void ArmFixer::fixStubHelpers() {
+  static const PtrT REG_HELPER_SIZE = 0xC;
+
+  const auto helperSect = mCtx.getSection("__TEXT", "__stub_helper").second;
+  if (!helperSect) {
+    return;
+  }
+
+  const auto linkeditFile = delegate.linkeditFile;
+  const auto dyldInfo = delegate.dyldInfo;
+  const bool canFixReg = dyldInfo != nullptr && dyldInfo->lazy_bind_size != 0;
+  const auto bindInfoStart =
+      canFixReg ? (const uint8_t *)(linkeditFile + dyldInfo->lazy_bind_off)
+                : nullptr;
+  const auto bindInfoEnd =
+      canFixReg ? bindInfoStart + dyldInfo->lazy_bind_size : nullptr;
+
+  const PtrT helperEnd = helperSect->addr + helperSect->size;
+  PtrT helperAddr = helperSect->addr;
+  if (auto info = armUtils.isStubBinder(helperAddr); info) {
+    helperAddr += info->size;
+
+    // may need to add private pointer to cache
+    if (pointerCache.unnamed.normal.contains(info->privatePtr)) {
+      pointerCache.namePointer(SPointerType::normal, info->privatePtr,
+                               {{"__dyld_private", SELF_LIBRARY_ORDINAL}});
+    }
+  }
+
+  while (helperAddr < helperEnd) {
+    activity.update();
+
+    if (const auto bindInfoOff = armUtils.getStubHelperData(helperAddr);
+        bindInfoOff) {
+      if (canFixReg) {
+        auto bindRecord = Macho::BindInfoReader<P>(bindInfoStart + *bindInfoOff,
+                                                   bindInfoEnd)();
+
+        //  Point the pointer to the stub helper
+        PtrT pAddr = mCtx.segments[bindRecord.segIndex].command->vmaddr +
+                     (PtrT)bindRecord.segOffset;
+        *(PtrT *)mCtx.convertAddrP(pAddr) = helperAddr;
+      } else {
+        SPDLOG_LOGGER_WARN(
+            logger, "Unable to fix stub helper at {:#x} without bind info.",
+            helperAddr);
+      }
+      helperAddr += REG_HELPER_SIZE;
+      continue;
+    }
+
+    // It may be a resolver
+    if (const auto resolverInfo = armUtils.getResolverData(helperAddr);
+        resolverInfo) {
+      // Shouldn't need fixing but check just in case
+      if (!mCtx.containsAddr(resolverInfo->targetFunc)) {
+        SPDLOG_LOGGER_WARN(logger,
+                           "Stub resolver at 0x{:x} points outside of image.",
+                           helperAddr);
+      }
+
+      // Point the pointer to the helper
+      *(PtrT *)mCtx.convertAddrP(resolverInfo->targetPtr) = helperAddr;
+
+      helperAddr += resolverInfo->size;
+      continue;
+    }
+
+    SPDLOG_LOGGER_ERROR(logger, "Unknown stub helper format at 0x{:x}",
+                        helperAddr);
+    helperAddr += REG_HELPER_SIZE; // Try to recover, will probably fail
+  }
+}
+
+void ArmFixer::scanStubs() {
+  activity.update(std::nullopt, "Scanning Stubs");
+
+  mCtx.enumerateSections(
+      [](auto seg, auto sect) {
+        return (sect->flags & SECTION_TYPE) == S_SYMBOL_STUBS;
+      },
+      [this](auto seg, auto sect) {
+        const auto sSize = sect->reserved2;
+        auto sLoc = mCtx.convertAddrP(sect->addr);
+        uint32_t indirectI = sect->reserved1;
+        for (PtrT sAddr = sect->addr; sAddr < sect->addr + sect->size;
+             sAddr += sSize, sLoc += sSize, indirectI++) {
+          activity.update();
+
+          const auto sDataPair = armUtils.resolveStub(sAddr);
+          if (!sDataPair) {
+            SPDLOG_LOGGER_ERROR(logger, "Unknown Arm stub at {:#x}", sAddr);
+            continue;
+          }
+          const auto [sTarget, sFormat] = *sDataPair;
+
+          // First symbolize the stub
+          std::set<SymbolicInfo::Symbol> symbols;
+
+          // Though indirect entries
+          if (const auto [entry, string] =
+                  delegate.lookupIndirectEntry(indirectI);
+              entry) {
+            uint64_t ordinal = GET_LIBRARY_ORDINAL(entry->n_desc);
+            symbols.insert({std::string(string), ordinal, std::nullopt});
+          }
+
+          // Though its pointer if not optimized
+          if (sFormat == AStubFormat::normalV4) {
+            if (const auto pAddr = *armUtils.getNormalV4LdrAddr(sAddr);
+                mCtx.containsAddr(pAddr)) {
+              if (pointerCache.ptr.lazy.contains(pAddr)) {
+                const auto &info = pointerCache.ptr.lazy.at(pAddr);
+                symbols.insert(info.symbols.begin(), info.symbols.end());
+              } else if (pointerCache.ptr.normal.contains(pAddr)) {
+                const auto &info = pointerCache.ptr.normal.at(pAddr);
+                symbols.insert(info.symbols.begin(), info.symbols.end());
+              }
+            }
+          }
+
+          // Through its target function
+          const auto sTargetFunc = armUtils.resolveStubChain(sAddr);
+          if (const auto info = symbolizeAddr(sTargetFunc); info) {
+            symbols.insert(info->symbols.begin(), info->symbols.end());
+          }
+
+          if (!symbols.empty()) {
+            addStubInfo(sAddr, {symbols});
+            brokenStubs.emplace_back(sFormat, sTargetFunc, sAddr, sLoc);
+          } else {
+            SPDLOG_LOGGER_WARN(logger, "Unable to symbolize stub at {:#x}",
+                               sAddr);
+          }
+        }
+        return true;
+      });
+}
+
+/// Fix stubs, first pass
+///
+/// The first pass tries to remove non broken stubs, or trivially fixable stubs.
+void ArmFixer::fixPass1() {
+  activity.update(std::nullopt, "Fixing Stubs: Pass 1");
+
+  for (auto it = brokenStubs.begin(); it != brokenStubs.end();) {
+    activity.update();
+
+    const auto &sInfo = *it;
+    const auto sAddr = sInfo.addr;
+    const auto &sSymbols = stubMap.at(sInfo.addr);
+
+    bool fixed = false;
+    switch (sInfo.format) {
+    case AStubFormat::normalV4: {
+      if (const auto pAddr = *armUtils.getNormalV4LdrAddr(sAddr);
+          mCtx.containsAddr(pAddr)) {
+        if (pointerCache.isAvailable(SPointerType::lazy, pAddr)) {
+          // Mark the pointer as used
+          pointerCache.used.lazy.insert(pAddr);
+          fixed = true;
+        } else if (pointerCache.isAvailable(SPointerType::normal, pAddr)) {
+          // Mark the pointer as used
+          pointerCache.used.normal.insert(pAddr);
+          *(PtrT *)mCtx.convertAddrP(pAddr) = 0;
+          fixed = true;
+        } else if (pointerCache.unnamed.lazy.contains(pAddr)) {
+          // Name the pointer and mark as used
+          pointerCache.namePointer(SPointerType::lazy, pAddr, sSymbols);
+          pointerCache.used.lazy.insert(pAddr);
+          fixed = true;
+        } else if (pointerCache.unnamed.normal.contains(pAddr)) {
+          // Name the pointer and mark as used
+          pointerCache.namePointer(SPointerType::normal, pAddr, sSymbols);
+          pointerCache.used.normal.insert(pAddr);
+          *(PtrT *)mCtx.convertAddrP(pAddr) = 0;
+          fixed = true;
+        } else {
+          SPDLOG_LOGGER_WARN(
+              logger, "Unable to find the pointer a normal stub at {:#x} uses.",
+              sAddr);
+        }
+      }
+      break;
+    }
+
+    default:
+      break;
+    }
+
+    if (fixed) {
+      it = brokenStubs.erase(it);
+    } else {
+      it++;
+    }
+  }
+}
+
+/// Fix stub, second pass
+///
+/// The second pass converts optimized stubs.
+void ArmFixer::fixPass2() {
+  activity.update(std::nullopt, "Fixing Stubs: Pass 2");
+  for (auto &sInfo : brokenStubs) {
+    activity.update();
+
+    const auto sAddr = sInfo.addr;
+    const auto sLoc = sInfo.loc;
+    const auto &sSymbols = stubMap.at(sInfo.addr);
+
+    switch (sInfo.format) {
+    case AStubFormat::normalV4:
+    case AStubFormat::optimizedV5: {
+      // Try to find an unused named lazy pointer
+      PtrT pAddr = 0;
+      for (const auto &sym : sSymbols.symbols) {
+        if (pointerCache.reverse.lazy.contains(sym.name)) {
+          for (const auto ptr : pointerCache.reverse.lazy[sym.name]) {
+            if (!pointerCache.used.lazy.contains(ptr)) {
+              pAddr = ptr;
+              pointerCache.used.lazy.insert(ptr);
+              break;
+            }
+          }
+          if (pAddr) {
+            break;
+          }
+        }
+      }
+
+      // Try to find an unused named normal pointer
+      if (!pAddr) {
+        for (const auto &sym : sSymbols.symbols) {
+          if (pointerCache.reverse.normal.contains(sym.name)) {
+            for (const auto ptr : pointerCache.reverse.normal[sym.name]) {
+              if (!pointerCache.used.normal.contains(ptr)) {
+                pAddr = ptr;
+                pointerCache.used.normal.insert(ptr);
+                *(PtrT *)mCtx.convertAddrP(ptr) = 0;
+                break;
+              }
+            }
+            if (pAddr) {
+              break;
+            }
+          }
+        }
+      }
+
+      if (!pAddr && !pointerCache.unnamed.lazy.empty()) {
+        // Use an unnamed lazy pointer
+        pAddr = *pointerCache.unnamed.lazy.begin();
+        pointerCache.namePointer(SPointerType::lazy, pAddr, sSymbols);
+        pointerCache.used.lazy.insert(pAddr);
+      }
+
+      if (!pAddr && !pointerCache.unnamed.normal.empty()) {
+        // Use an unnamed normal pointer
+        pAddr = *pointerCache.unnamed.normal.begin();
+        pointerCache.namePointer(SPointerType::normal, pAddr, sSymbols);
+        pointerCache.used.normal.insert(pAddr);
+        *(PtrT *)mCtx.convertAddrP(pAddr) = 0;
+      }
+
+      if (!pAddr) {
+        SPDLOG_LOGGER_WARN(logger, "Unable to fix optimized stub at {:#x}",
+                           sAddr);
+        break;
+      }
+
+      // Fix the stub
+      armUtils.writeNormalV4Stub(sLoc, sAddr, pAddr);
+      break;
+    }
+
+    default:
+      break;
+    }
+  }
+}
+
+void ArmFixer::fixCallsites() {
+  activity.update(std::nullopt, "Fixing Callsites");
+
+  const auto textSect = mCtx.getSection("__TEXT", "__text").second;
+  if (textSect == nullptr) {
+    SPDLOG_LOGGER_WARN(logger, "Unable to find text section");
+    return;
+  }
+
+  auto textAddr = textSect->addr;
+  auto textData = mCtx.convertAddrP(textAddr);
+
+  for (const auto &inst : disasm.instructions) {
+    // only look for arm immediate branch instructions
+    const bool isBL = inst.id == ARM_INS_BL;
+    const bool isBLX = inst.id == ARM_INS_BLX;
+    const bool isB = inst.id == ARM_INS_B;
+    if (isBL || isBLX || isB) {
+      if (inst.size != 4) {
+        continue;
+      }
+
+      // get the branch target
+      if (inst.opStr.find(",") != std::string::npos || inst.opStr[0] != '#') {
+        // only want direct branches with imm, no registers
+        continue;
+      }
+
+      uint32_t brTarget;
+      try {
+        brTarget = std::stoi(inst.opStr.substr(1), nullptr, 16);
+      } catch (std::invalid_argument const &) {
+        continue;
+      }
+
+      if (mCtx.containsAddr(brTarget)) {
+        continue;
+      }
+
+      auto iAddr = (uint32_t)inst.address;
+      auto iLoc = (uint32_t *)(textData + (iAddr - textAddr));
+      auto iLocAligned = (uint32_t *)(textData + (iAddr - 2 - textAddr));
+
+      auto fTarget = delegate.resolveStubChain(brTarget);
+      auto names = symbolizeAddr(fTarget);
+      if (!names) {
+        // Too many edge cases for meaningful diagnostics
+        // SPDLOG_LOGGER_DEBUG(
+        //     logger, "Unable to symbolize branch at {:#x} with target {:#x}",
+        //     iAddr, brTarget);
+        continue;
+      }
+
+      // Try to find a stub
+      bool fixed = false;
+      for (const auto &name : names->symbols) {
+        if (reverseStubMap.contains(name.name)) {
+          const auto stubAddr = *reverseStubMap[name.name].begin();
+
+          uint32_t newInstruction;
+          int32_t displacement = stubAddr - (iAddr + 4);
+          if (isBL || isBLX) {
+            newInstruction = 0xC000F000;
+            if (iAddr & 0x2) {
+              displacement += 2;
+            }
+          } else {
+            newInstruction = 0x9000F000;
+          }
+
+          uint32_t s = (uint32_t)(displacement >> 24) & 0x1;
+          uint32_t i1 = (uint32_t)(displacement >> 23) & 0x1;
+          uint32_t i2 = (uint32_t)(displacement >> 22) & 0x1;
+          uint32_t imm10 = (uint32_t)(displacement >> 12) & 0x3FF;
+          uint32_t imm11 = (uint32_t)(displacement >> 1) & 0x7FF;
+          uint32_t j1 = (i1 == s);
+          uint32_t j2 = (i2 == s);
+          uint32_t nextDisp = (j1 << 13) | (j2 << 11) | imm11;
+          uint32_t firstDisp = (s << 10) | imm10;
+          newInstruction |= (nextDisp << 16) | firstDisp;
+
+          *iLoc = newInstruction;
+          fixed = true;
+        }
+      }
+      if (fixed) {
+        activity.update();
+        continue;
+      } else {
+        SPDLOG_LOGGER_DEBUG(
+            logger,
+            "Unable to find stub for branch at {:#x}, with target "
+            "{:#x}, with symbols {}.",
+            iAddr, brTarget, fmt::join(names->symbols, ", "));
+      }
+    }
+  }
+}
+
+void ArmFixer::addStubInfo(PtrT addr, SymbolicInfo info) {
+  SymbolicInfo *newInfo;
+  if (stubMap.contains(addr)) {
+    newInfo = &stubMap.at(addr);
+    newInfo->symbols.insert(info.symbols.begin(), info.symbols.end());
+  } else {
+    newInfo = &stubMap.insert({addr, info}).first->second;
+  }
+
+  for (auto &sym : newInfo->symbols) {
+    reverseStubMap[sym.name].insert(addr);
+  }
+}
+
+const SymbolicInfo *ArmFixer::symbolizeAddr(PtrT addr) const {
+  if (auto res = symbolizer->symbolizeAddr(addr); res) {
+    return res;
+  } else {
+    if (addr & 1) {
+      return symbolizer->symbolizeAddr(addr & -4);
+    } else {
+      return symbolizer->symbolizeAddr(addr | 1);
+    }
+  }
+}
+#pragma endregion ArmFixer
+
 #pragma region StubFixer
 template <class A>
-StubFixer<A>::StubFixer(Utils::ExtractionContext<P> &eCtx)
+StubFixer<A>::StubFixer(Utils::ExtractionContext<A> &eCtx)
     : eCtx(eCtx), mCtx(eCtx.mCtx), dCtx(eCtx.dCtx), activity(eCtx.activity),
       logger(eCtx.logger), accelerator(eCtx.accelerator),
       linkeditTracker(eCtx.linkeditTracker),
-      pointerTracker(eCtx.pointerTracker), symbolizer(new Symbolizer<P>(eCtx)),
+      pointerTracker(eCtx.pointerTracker), disasm(eCtx.disassembler),
+      symbolizer(new Symbolizer<A>(eCtx)),
       linkeditFile(
           mCtx.convertAddr(mCtx.getSegment("__LINKEDIT")->command->vmaddr)
               .second),
@@ -812,6 +1237,9 @@ StubFixer<A>::StubFixer(Utils::ExtractionContext<P> &eCtx)
                 std::is_same_v<A, Utils::Arch::arm64_32>) {
     arm64Utils.emplace(eCtx);
     arm64Fixer.emplace(*this);
+  } else if constexpr (std::is_same_v<A, Utils::Arch::arm>) {
+    armUtils.emplace(eCtx);
+    armFixer.emplace(*this);
   }
 }
 
@@ -852,6 +1280,8 @@ template <class A> void StubFixer<A>::fix() {
   if constexpr (std::is_same_v<A, Utils::Arch::arm64> ||
                 std::is_same_v<A, Utils::Arch::arm64_32>) {
     arm64Fixer->fix();
+  } else if constexpr (std::is_same_v<A, Utils::Arch::arm>) {
+    armFixer->fix();
   }
 
   fixIndirectEntries();
@@ -880,6 +1310,8 @@ StubFixer<A>::PtrT StubFixer<A>::resolveStubChain(const PtrT addr) {
   if constexpr (std::is_same_v<A, Utils::Arch::arm64> ||
                 std::is_same_v<A, Utils::Arch::arm64_32>) {
     return arm64Utils->resolveStubChain(addr);
+  } else if constexpr (std::is_same_v<A, Utils::Arch::arm>) {
+    return armUtils->resolveStubChain(addr);
   }
 
   throw std::logic_error("Arch not supported");
@@ -1010,110 +1442,112 @@ template <class A> void StubFixer<A>::fixIndirectEntries() {
   uint32_t entryIndex = dysymtab->iundefsym + dysymtab->nundefsym;
   uint32_t stringsIndex = symtab->strsize;
 
-  for (auto &seg : mCtx.segments) {
-    for (auto sect : seg.sections) {
-      switch (sect->flags & SECTION_TYPE) {
-      case S_NON_LAZY_SYMBOL_POINTERS:
-      case S_LAZY_SYMBOL_POINTERS: {
-        auto pType = pointerCache.getPointerType(sect);
+  mCtx.enumerateSections([&](auto seg, auto sect) {
+    switch (sect->flags & SECTION_TYPE) {
+    case S_NON_LAZY_SYMBOL_POINTERS:
+    case S_LAZY_SYMBOL_POINTERS: {
+      auto pType = pointerCache.getPointerType(sect);
 
-        uint32_t indirectI = sect->reserved1;
-        for (PtrT pAddr = sect->addr; pAddr < sect->addr + sect->size;
-             pAddr += sizeof(PtrT), indirectI++) {
-          auto indirectEntry = indirectEntries + indirectI;
-          if (!isRedactedIndirect(*indirectEntry)) {
-            continue;
-          }
-
-          SymbolicInfo *pInfo = pointerCache.getPointerInfo(pType, pAddr);
-          if (!pInfo) {
-            if (!mCtx.containsAddr(pointerTracker.slideP(pAddr))) {
-              SPDLOG_LOGGER_DEBUG(
-                  logger,
-                  "Unable to symbolize pointer at {:#x}, with target {:#x}, "
-                  "for redacted indirect symbol entry.",
-                  pAddr, resolveStubChain(pointerTracker.slideP(pAddr)));
-            }
-            continue;
-          }
-          const auto &preferredSym = pInfo->preferredSymbol();
-
-          // Create new entry and add string
-          Macho::Loader::nlist<P> entry{};
-          entry.n_type = 1;
-          SET_LIBRARY_ORDINAL(entry.n_desc, (uint16_t)preferredSym.ordinal);
-          entry.n_un.n_strx = stringsIndex;
-
-          newEntries.push_back(entry);
-          newStrings.push_back(preferredSym.name);
-          *indirectEntry = entryIndex;
-
-          entryIndex++;
-          stringsIndex += (uint32_t)preferredSym.name.length() + 1;
+      uint32_t indirectI = sect->reserved1;
+      for (PtrT pAddr = sect->addr; pAddr < sect->addr + sect->size;
+           pAddr += sizeof(PtrT), indirectI++) {
+        auto indirectEntry = indirectEntries + indirectI;
+        if (!isRedactedIndirect(*indirectEntry)) {
+          continue;
         }
-        break;
-      }
 
-      case S_SYMBOL_STUBS: {
-        uint32_t indirectI = sect->reserved1;
-        for (PtrT sAddr = sect->addr; sAddr < sect->addr + sect->size;
-             sAddr += sect->reserved2, indirectI++) {
-          auto indirectEntry = indirectEntries + indirectI;
-          if (!isRedactedIndirect(*indirectEntry)) {
-            continue;
-          }
-
-          SymbolicInfo *sInfo = nullptr;
-          if constexpr (std::is_same_v<A, Utils::Arch::arm64> ||
-                        std::is_same_v<A, Utils::Arch::arm64_32>) {
-            if (arm64Fixer->stubMap.contains(sAddr)) {
-              sInfo = &arm64Fixer->stubMap.at(sAddr);
-            }
-          } else {
-            throw std::logic_error("Arch not implemented");
-          }
-          if (!sInfo) {
+        SymbolicInfo *pInfo = pointerCache.getPointerInfo(pType, pAddr);
+        if (!pInfo) {
+          if (!mCtx.containsAddr(pointerTracker.slideP(pAddr))) {
             SPDLOG_LOGGER_DEBUG(
                 logger,
-                "Unable to symbolize stub at {:#x} for redacted "
-                "indirect symbol entry.",
-                sAddr);
-            continue;
+                "Unable to symbolize pointer at {:#x}, with target {:#x}, "
+                "for redacted indirect symbol entry.",
+                pAddr, resolveStubChain(pointerTracker.slideP(pAddr)));
           }
-          const auto &preferredSym = sInfo->preferredSymbol();
-
-          // Create new entry and add string
-          Macho::Loader::nlist<P> entry{};
-          entry.n_type = 1;
-          SET_LIBRARY_ORDINAL(entry.n_desc, (uint16_t)preferredSym.ordinal);
-          entry.n_un.n_strx = stringsIndex;
-
-          newEntries.push_back(entry);
-          newStrings.push_back(preferredSym.name);
-          *indirectEntry = entryIndex;
-
-          entryIndex++;
-          stringsIndex += (uint32_t)preferredSym.name.length() + 1;
+          continue;
         }
-        break;
-      }
+        const auto &preferredSym = pInfo->preferredSymbol();
 
-      case S_THREAD_LOCAL_VARIABLE_POINTERS: {
-        SPDLOG_LOGGER_WARN(logger, "Unable to handle indirect entries for "
-                                   "S_THREAD_LOCAL_VARIABLE_POINTERS section.");
-        break;
-      }
-      case S_LAZY_DYLIB_SYMBOL_POINTERS: {
-        SPDLOG_LOGGER_WARN(logger, "Unable to handle indirect entries for "
-                                   "S_LAZY_DYLIB_SYMBOL_POINTERS section.");
-        break;
-      }
+        // Create new entry and add string
+        Macho::Loader::nlist<P> entry{};
+        entry.n_type = 1;
+        SET_LIBRARY_ORDINAL(entry.n_desc, (uint16_t)preferredSym.ordinal);
+        entry.n_un.n_strx = stringsIndex;
 
-      default:
-        break;
+        newEntries.push_back(entry);
+        newStrings.push_back(preferredSym.name);
+        *indirectEntry = entryIndex;
+
+        entryIndex++;
+        stringsIndex += (uint32_t)preferredSym.name.length() + 1;
       }
+      break;
     }
-  }
+
+    case S_SYMBOL_STUBS: {
+      uint32_t indirectI = sect->reserved1;
+      for (PtrT sAddr = sect->addr; sAddr < sect->addr + sect->size;
+           sAddr += sect->reserved2, indirectI++) {
+        auto indirectEntry = indirectEntries + indirectI;
+        if (!isRedactedIndirect(*indirectEntry)) {
+          continue;
+        }
+
+        SymbolicInfo *sInfo = nullptr;
+        if constexpr (std::is_same_v<A, Utils::Arch::arm64> ||
+                      std::is_same_v<A, Utils::Arch::arm64_32>) {
+          if (arm64Fixer->stubMap.contains(sAddr)) {
+            sInfo = &arm64Fixer->stubMap.at(sAddr);
+          }
+        } else if constexpr (std::is_same_v<A, Utils::Arch::arm>) {
+          if (armFixer->stubMap.contains(sAddr)) {
+            sInfo = &armFixer->stubMap.at(sAddr);
+          }
+        } else {
+          throw std::logic_error("Arch not implemented");
+        }
+        if (!sInfo) {
+          SPDLOG_LOGGER_DEBUG(logger,
+                              "Unable to symbolize stub at {:#x} for redacted "
+                              "indirect symbol entry.",
+                              sAddr);
+          continue;
+        }
+        const auto &preferredSym = sInfo->preferredSymbol();
+
+        // Create new entry and add string
+        Macho::Loader::nlist<P> entry{};
+        entry.n_type = 1;
+        SET_LIBRARY_ORDINAL(entry.n_desc, (uint16_t)preferredSym.ordinal);
+        entry.n_un.n_strx = stringsIndex;
+
+        newEntries.push_back(entry);
+        newStrings.push_back(preferredSym.name);
+        *indirectEntry = entryIndex;
+
+        entryIndex++;
+        stringsIndex += (uint32_t)preferredSym.name.length() + 1;
+      }
+      break;
+    }
+
+    case S_THREAD_LOCAL_VARIABLE_POINTERS: {
+      // ignore
+      break;
+    }
+    case S_LAZY_DYLIB_SYMBOL_POINTERS: {
+      SPDLOG_LOGGER_WARN(logger, "Unable to handle indirect entries for "
+                                 "S_LAZY_DYLIB_SYMBOL_POINTERS section.");
+      break;
+    }
+
+    default:
+      break;
+    }
+
+    return true;
+  });
 
   // Extend the entries region and add the data
   auto entriesMetadata =
@@ -1178,8 +1612,9 @@ template <class A> bool StubFixer<A>::isInCodeRegions(PtrT addr) {
 }
 #pragma endregion StubFixer
 
-template <class A>
-void Converter::fixStubs(Utils::ExtractionContext<typename A::P> &eCtx) {
+template <class A> void Converter::fixStubs(Utils::ExtractionContext<A> &eCtx) {
+  eCtx.disassembler.disasm();
+
   eCtx.activity.get().update("Stub Fixer", "Starting Up");
 
   if constexpr (std::is_same_v<A, Utils::Arch::arm> ||
@@ -1192,7 +1627,7 @@ void Converter::fixStubs(Utils::ExtractionContext<typename A::P> &eCtx) {
 }
 
 #define X(T)                                                                   \
-  template void Converter::fixStubs<T>(Utils::ExtractionContext<T::P> & eCtx);
+  template void Converter::fixStubs<T>(Utils::ExtractionContext<T> & eCtx);
 X(Utils::Arch::x86_64)
 X(Utils::Arch::arm)
 X(Utils::Arch::arm64)

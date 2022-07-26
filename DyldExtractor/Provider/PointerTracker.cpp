@@ -27,8 +27,9 @@ bool PointerTracker<P>::MappingSlideInfo::containsData(
 }
 
 template <class P>
-PointerTracker<P>::PointerTracker(const Utils::ExtractionContext<P> &eCtx)
-    : dCtx(&eCtx.dCtx.get()), logger(eCtx.logger) {
+PointerTracker<P>::PointerTracker(Dyld::Context &dCtx,
+                                  std::shared_ptr<spdlog::logger> logger)
+    : dCtx(&dCtx), logger(logger) {
   fillMappings();
 }
 
@@ -46,7 +47,12 @@ PointerTracker<P>::PtrT PointerTracker<P>::slideP(const PtrT addr) const {
       break;
     }
     case 2: {
-      return *(PtrT *)ptr & 0xffffffffff;
+      auto slideInfo = (dyld_cache_slide_info2 *)map.slideInfo;
+      auto val = *(PtrT *)ptr & ~slideInfo->delta_mask;
+      if (val != 0) {
+        val += slideInfo->value_add;
+      }
+      return (PtrT)val;
       break;
     }
     case 3: {

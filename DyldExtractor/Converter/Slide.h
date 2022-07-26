@@ -6,7 +6,7 @@
 
 namespace Converter {
 
-template <class P> void processSlideInfo(Utils::ExtractionContext<P> &eCtx);
+template <class A> void processSlideInfo(Utils::ExtractionContext<A> &eCtx);
 
 } // namespace Converter
 

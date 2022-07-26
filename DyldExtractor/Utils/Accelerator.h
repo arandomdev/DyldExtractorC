@@ -51,8 +51,9 @@ public:
   std::map<std::string, AcceleratorTypes::SymbolizerExportEntryMapT>
       exportsCache;
 
-  // Arm64Utils
+  // Arch Utils
   std::map<PtrT, PtrT> arm64ResolvedChains;
+  std::map<PtrT, PtrT> armResolvedChains;
 
   // StubFixer
   struct CodeRegion {

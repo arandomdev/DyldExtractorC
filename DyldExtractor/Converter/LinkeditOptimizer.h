@@ -88,7 +88,7 @@ private:
 };
 
 bool isRedactedIndirect(uint32_t entry);
-template <class P> void optimizeLinkedit(Utils::ExtractionContext<P> &eCtx);
+template <class A> void optimizeLinkedit(Utils::ExtractionContext<A> &eCtx);
 
 } // namespace Converter
 

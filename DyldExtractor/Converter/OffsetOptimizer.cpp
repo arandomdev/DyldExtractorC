@@ -41,9 +41,9 @@ void updateLinkedit(Macho::Context<false, P> &mCtx, int32_t shiftDelta) {
   }
 }
 
-template <class P>
+template <class A>
 std::vector<WriteProcedure>
-Converter::optimizeOffsets(Utils::ExtractionContext<P> &eCtx) {
+Converter::optimizeOffsets(Utils::ExtractionContext<A> &eCtx) {
   eCtx.activity.get().update("Offset Optimizer", "Updating Offsets");
   auto &mCtx = eCtx.mCtx.get();
 
@@ -81,9 +81,11 @@ Converter::optimizeOffsets(Utils::ExtractionContext<P> &eCtx) {
   return procedures;
 }
 
-template std::vector<WriteProcedure>
-Converter::optimizeOffsets<Utils::Pointer32>(
-    Utils::ExtractionContext<Utils::Pointer32> &eCtx);
-template std::vector<WriteProcedure>
-Converter::optimizeOffsets<Utils::Pointer64>(
-    Utils::ExtractionContext<Utils::Pointer64> &eCtx);
+#define X(T)                                                                   \
+  template std::vector<WriteProcedure> Converter::optimizeOffsets<T>(          \
+      Utils::ExtractionContext<T> & eCtx);
+X(Utils::Arch::x86_64)
+X(Utils::Arch::arm)
+X(Utils::Arch::arm64)
+X(Utils::Arch::arm64_32)
+#undef X

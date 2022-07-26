@@ -15,8 +15,8 @@ struct WriteProcedure {
 /// Optimize a mach-o file's offsets for output.
 ///
 /// @returns A vector of write procedures.
-template <class P>
-std::vector<WriteProcedure> optimizeOffsets(Utils::ExtractionContext<P> &eCtx);
+template <class A>
+std::vector<WriteProcedure> optimizeOffsets(Utils::ExtractionContext<A> &eCtx);
 
 }; // namespace Converter
 

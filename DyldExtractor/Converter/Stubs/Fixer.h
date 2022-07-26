@@ -3,6 +3,7 @@
 
 #include "../LinkeditOptimizer.h"
 #include "Arm64Utils.h"
+#include "ArmUtils.h"
 #include "Symbolizer.h"
 #include <Macho/BindInfo.h>
 #include <Utils/ExtractionContext.h>
@@ -75,7 +76,7 @@ template <class A> class Arm64Fixer {
   using SPtrT = P::SPtrT;
 
   using SPointerType = SymbolPointerCache<A>::PointerType;
-  using AStubFormat = Arm64Utils<P>::StubFormat;
+  using AStubFormat = Arm64Utils<A>::StubFormat;
 
 public:
   Arm64Fixer(StubFixer<A> &delegate);
@@ -104,10 +105,61 @@ private:
   Macho::Context<false, P> &mCtx;
   ActivityLogger &activity;
   std::shared_ptr<spdlog::logger> logger;
-  Symbolizer<P> *symbolizer;
+  Symbolizer<A> *symbolizer;
 
   SymbolPointerCache<A> &pointerCache;
-  Arm64Utils<P> &arm64Utils;
+  Arm64Utils<A> &arm64Utils;
+
+  std::map<std::reference_wrapper<const std::string>, std::set<PtrT>,
+           std::less<const std::string>>
+      reverseStubMap;
+
+  std::list<StubInfo> brokenStubs;
+};
+
+class ArmFixer {
+  using A = Utils::Arch::arm;
+  using P = A::P;
+  using PtrT = P::PtrT;
+
+  using SPointerType = SymbolPointerCache<A>::PointerType;
+  using AStubFormat = ArmUtils::StubFormat;
+
+public:
+  ArmFixer(StubFixer<A> &delegate);
+
+  void fix();
+
+  std::map<PtrT, SymbolicInfo> stubMap;
+
+private:
+  struct StubInfo {
+    AStubFormat format;
+    PtrT target; // The target function of the stub
+    PtrT addr;
+    uint8_t *loc; // Writable location of the stub
+  };
+
+  void fixStubHelpers();
+  void scanStubs();
+  void fixPass1();
+  void fixPass2();
+  void fixCallsites();
+
+  void addStubInfo(PtrT sAddr, SymbolicInfo info);
+
+  /// Encoding independent lookup
+  const SymbolicInfo *symbolizeAddr(PtrT addr) const;
+
+  StubFixer<A> &delegate;
+  Macho::Context<false, P> &mCtx;
+  ActivityLogger &activity;
+  std::shared_ptr<spdlog::logger> logger;
+  Provider::Disassembler<A> &disasm;
+  Symbolizer<A> *symbolizer;
+
+  SymbolPointerCache<A> &pointerCache;
+  ArmUtils &armUtils;
 
   std::map<std::reference_wrapper<const std::string>, std::set<PtrT>,
            std::less<const std::string>>
@@ -119,11 +171,12 @@ private:
 template <class A> class StubFixer {
   friend class SymbolPointerCache<A>;
   friend class Arm64Fixer<A>;
+  friend class ArmFixer;
   using P = A::P;
   using PtrT = P::PtrT;
 
 public:
-  StubFixer(Utils::ExtractionContext<P> &eCtx);
+  StubFixer(Utils::ExtractionContext<A> &eCtx);
   void fix();
 
 private:
@@ -134,15 +187,16 @@ private:
   void fixIndirectEntries();
   bool isInCodeRegions(PtrT addr);
 
-  Utils::ExtractionContext<P> &eCtx;
+  Utils::ExtractionContext<A> &eCtx;
   Dyld::Context &dCtx;
   Macho::Context<false, P> &mCtx;
   ActivityLogger &activity;
   std::shared_ptr<spdlog::logger> logger;
   Utils::Accelerator<P> &accelerator;
-  Provider::PointerTracker<P> pointerTracker;
+  Provider::PointerTracker<P> &pointerTracker;
+  Provider::Disassembler<A> &disasm;
   Converter::LinkeditTracker<P> *linkeditTracker;
-  Symbolizer<P> *symbolizer;
+  Symbolizer<A> *symbolizer;
 
   uint8_t *linkeditFile;
   Macho::Loader::dyld_info_command *dyldInfo;
@@ -151,11 +205,14 @@ private:
 
   SymbolPointerCache<A> pointerCache;
 
-  std::optional<Arm64Utils<P>> arm64Utils;
+  std::optional<Arm64Utils<A>> arm64Utils;
   std::optional<Arm64Fixer<A>> arm64Fixer;
+
+  std::optional<ArmUtils> armUtils;
+  std::optional<ArmFixer> armFixer;
 };
 
-template <class A> void fixStubs(Utils::ExtractionContext<typename A::P> &eCtx);
+template <class A> void fixStubs(Utils::ExtractionContext<A> &eCtx);
 
 } // namespace Converter
 

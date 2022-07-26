@@ -57,26 +57,26 @@ ProgramArguments parseArgs(int argc, char *argv[]) {
   return args;
 }
 
-template <class P>
+template <class A>
 std::string
-formatStubFormat(typename Converter::Arm64Utils<P>::StubFormat format) {
+formatStubFormat(typename Converter::Arm64Utils<A>::StubFormat format) {
   switch (format) {
-  case Converter::Arm64Utils<P>::StubFormat::StubNormal:
+  case Converter::Arm64Utils<A>::StubFormat::StubNormal:
     return "StubNormal";
     break;
-  case Converter::Arm64Utils<P>::StubFormat::StubOptimized:
+  case Converter::Arm64Utils<A>::StubFormat::StubOptimized:
     return "StubOptimized";
     break;
-  case Converter::Arm64Utils<P>::StubFormat::AuthStubNormal:
+  case Converter::Arm64Utils<A>::StubFormat::AuthStubNormal:
     return "AuthStubNormal";
     break;
-  case Converter::Arm64Utils<P>::StubFormat::AuthStubOptimized:
+  case Converter::Arm64Utils<A>::StubFormat::AuthStubOptimized:
     return "AuthStubOptimized";
     break;
-  case Converter::Arm64Utils<P>::StubFormat::AuthStubResolver:
+  case Converter::Arm64Utils<A>::StubFormat::AuthStubResolver:
     return "AuthStubResolver";
     break;
-  case Converter::Arm64Utils<P>::StubFormat::Resolver:
+  case Converter::Arm64Utils<A>::StubFormat::Resolver:
     return "Resolver";
     break;
 
@@ -123,10 +123,9 @@ template <class A> void program(Dyld::Context &dCtx, ProgramArguments &args) {
       auto mCtx = dCtx.createMachoCtx<false, typename A::P>(dCtx.images[0]);
       ActivityLogger activity("dyldex_info", std::cout, false);
       Utils::Accelerator<typename A::P> accelerator;
-      Utils::ExtractionContext<typename A::P> eCtx(dCtx, mCtx, activity,
-                                                   accelerator);
+      Utils::ExtractionContext<A> eCtx(dCtx, mCtx, activity, accelerator);
 
-      Converter::Arm64Utils arm64Utils(eCtx);
+      Converter::Arm64Utils<A> arm64Utils(eCtx);
 
       auto currentAddr = args.address;
       while (true) {
@@ -137,8 +136,8 @@ template <class A> void program(Dyld::Context &dCtx, ProgramArguments &args) {
 
         auto [newAddr, format] = *data;
         std::cout << std::format("{}: {:#x} -> {:#x}",
-                                 formatStubFormat<typename A::P>(format),
-                                 currentAddr, newAddr);
+                                 formatStubFormat<A>(format), currentAddr,
+                                 newAddr);
         if (currentAddr == newAddr) {
           break;
         } else {
