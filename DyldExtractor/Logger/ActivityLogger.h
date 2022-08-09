@@ -6,7 +6,7 @@
 #include <spdlog/logger.h>
 #include <spdlog/sinks/ostream_sink.h>
 
-/// A wrapper for a streambuf that allows an activity indicator.
+/// @brief A wrapper for a streambuf that allows an activity indicator.
 ///
 /// Essentially does new line, moves line up, and insert line, before
 /// every line.
@@ -30,8 +30,7 @@ class ActivityLogger {
 public:
   std::shared_ptr<spdlog::logger> logger;
 
-  /// Create a logger with an optional activity indicator.
-  ///
+  /// @brief Create a logger with an optional activity indicator.
   /// @param name The name of the logger.
   /// @param output The output stream.
   /// @param enableActivity Enable or disable the activity indicator.
@@ -50,10 +49,10 @@ public:
               std::optional<std::string> message = std::nullopt,
               bool fullUpdate = false);
 
-  /// Stop the activity indicator
+  /// @brief Stop the activity indicator
   void stopActivity();
 
-  /// Get the logger stream that won't interfere with
+  /// @brief Get the logger stream that won't interfere with
   /// the activity indicator.
   std::ostream &getLoggerStream();
 

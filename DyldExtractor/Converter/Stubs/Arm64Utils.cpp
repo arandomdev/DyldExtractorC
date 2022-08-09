@@ -4,8 +4,8 @@ using namespace Converter;
 
 template <class A>
 Arm64Utils<A>::Arm64Utils(const Utils::ExtractionContext<A> &eCtx)
-    : dCtx(eCtx.dCtx), ptrTracker(eCtx.pointerTracker),
-      accelerator(eCtx.accelerator) {
+    : dCtx(*eCtx.dCtx), ptrTracker(eCtx.pointerTracker),
+      accelerator(*eCtx.accelerator) {
 
   stubResolvers = {
       {StubFormat::StubNormal,

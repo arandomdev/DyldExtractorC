@@ -7,6 +7,7 @@
 
 namespace Macho {
 
+/// TODO: Refactor away generator
 template <typename T> struct Generator {
   struct promise_type;
   using handle_type = std::coroutine_handle<promise_type>;
@@ -79,7 +80,6 @@ struct BindRecord {
 
 template <class P>
 Generator<BindRecord> BindInfoReader(const uint8_t *start, const uint8_t *end);
-//
 
 } // namespace Macho
 

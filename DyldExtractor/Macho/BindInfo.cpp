@@ -1,47 +1,11 @@
 #include "BindInfo.h"
 
 #include <Utils/Architectures.h>
+#include <Utils/Uleb128.h>
 #include <fmt/core.h>
 #include <stdexcept>
 
 using namespace Macho;
-
-uint64_t readUleb128(const uint8_t *&p, const uint8_t *end) {
-  uint64_t result = 0;
-  int bit = 0;
-  do {
-    if (p == end) {
-      throw std::invalid_argument("malformed uleb128");
-    }
-    uint64_t slice = *p & 0x7f;
-
-    if (bit > 63) {
-      throw std::invalid_argument("uleb128 too big for uint64");
-    } else {
-      result |= (slice << bit);
-      bit += 7;
-    }
-  } while (*p++ & 0x80);
-  return result;
-}
-
-int64_t readSleb128(const uint8_t *&p, const uint8_t *end) {
-  int64_t result = 0;
-  int bit = 0;
-  uint8_t byte = 0;
-  do {
-    if (p == end) {
-      throw std::invalid_argument("malformed sleb128");
-    }
-    byte = *p++;
-    result |= (((int64_t)(byte & 0x7f)) << bit);
-    bit += 7;
-  } while (byte & 0x80);
-  // sign extend negative numbers
-  if (((byte & 0x40) != 0) && (bit < 64))
-    result |= (~0ULL) << bit;
-  return result;
-}
 
 template <class P>
 Generator<BindRecord> Macho::BindInfoReader(const uint8_t *start,
@@ -66,7 +30,7 @@ Generator<BindRecord> Macho::BindInfoReader(const uint8_t *start,
       break;
 
     case BIND_OPCODE_SET_DYLIB_ORDINAL_ULEB:
-      currentRecord.libOrdinal = (int)readUleb128(p, end);
+      currentRecord.libOrdinal = (int)Utils::readUleb128(p, end);
       break;
 
     case BIND_OPCODE_SET_DYLIB_SPECIAL_IMM:
@@ -92,16 +56,16 @@ Generator<BindRecord> Macho::BindInfoReader(const uint8_t *start,
       break;
 
     case BIND_OPCODE_SET_ADDEND_SLEB:
-      currentRecord.addend = readSleb128(p, end);
+      currentRecord.addend = Utils::readSleb128(p, end);
       break;
 
     case BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB:
       currentRecord.segIndex = imm;
-      currentRecord.segOffset = readUleb128(p, end);
+      currentRecord.segOffset = Utils::readUleb128(p, end);
       break;
 
     case BIND_OPCODE_ADD_ADDR_ULEB:
-      currentRecord.segOffset += readUleb128(p, end);
+      currentRecord.segOffset += Utils::readUleb128(p, end);
       break;
 
     case BIND_OPCODE_DO_BIND:
@@ -111,7 +75,7 @@ Generator<BindRecord> Macho::BindInfoReader(const uint8_t *start,
 
     case BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB:
       co_yield currentRecord;
-      currentRecord.segOffset += readUleb128(p, end) + ptrSize;
+      currentRecord.segOffset += Utils::readUleb128(p, end) + ptrSize;
       break;
 
     case BIND_OPCODE_DO_BIND_ADD_ADDR_IMM_SCALED:
@@ -120,8 +84,8 @@ Generator<BindRecord> Macho::BindInfoReader(const uint8_t *start,
       break;
 
     case BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB: {
-      const auto count = readUleb128(p, end);
-      const auto skip = readUleb128(p, end);
+      const auto count = Utils::readUleb128(p, end);
+      const auto skip = Utils::readUleb128(p, end);
       for (uint32_t i = 0; i < count; i++) {
         co_yield currentRecord;
         currentRecord.segOffset += skip + ptrSize;

@@ -32,8 +32,7 @@ public:
 
   ArmUtils(Utils::ExtractionContext<A> &eCtx);
 
-  /// Sign extend a number
-  ///
+  /// @brief Sign extend a number
   /// @tparam T The type of the number
   /// @tparam B The number of bits
   /// @returns The number sign extended.
@@ -44,47 +43,40 @@ public:
     return s.x = x;
   };
 
-  /// Check if it is a stub binder
-  ///
+  /// @brief Check if it is a stub binder
   /// @param addr Address to the bind, usually start of the __stub_helper sect.
   /// @returns If it is or not.
   std::optional<StubBinderInfo> isStubBinder(PtrT addr) const;
 
-  /// Get the stub helper data
-  ///
+  /// @brief Get the stub helper data
   /// @param addr The address of the stub helper
   /// @returns The stub data, or nullopt if the format is incorrect.
   std::optional<PtrT> getStubHelperData(PtrT addr) const;
 
-  /// Get resolver data
-  ///
+  /// @brief Get resolver data
   /// Resolver data is a special helper that should branch to a function within
   /// its own image.
   /// @param addr the address of the stub helper
   /// @returns Optional resolver data
   std::optional<ResolverData> getResolverData(PtrT addr) const;
 
-  /// Resolve a stub chain
-  ///
+  /// @brief Resolve a stub chain
   /// @param addr The address of the beginning of the chain
   /// @returns The last known node of the chain. Can fail to properly resolve
   ///   if the format is not known.
   PtrT resolveStubChain(const PtrT addr);
 
-  /// Get a stub's target and its format
-  ///
+  /// @brief Get a stub's target and its format
   /// @param addr The address of the stub
   /// @returns An optional pair of the stub's target and its format.
   std::optional<std::pair<PtrT, StubFormat>> resolveStub(const PtrT addr) const;
 
-  /// Get the ldr address of a normal V4 stub
-  ///
+  /// @brief Get the ldr address of a normal V4 stub
   /// @param addr The address of the stub
   /// @returns The target address or nullopt
   std::optional<PtrT> getNormalV4LdrAddr(PtrT addr) const;
 
-  /// Write a normal V4 stub at the location.
-  ///
+  /// @brief Write a normal V4 stub at the location.
   /// @param loc Where to write the stub
   /// @param stubAddr The address of the stub
   /// @param ldrAddr The address for the target load
@@ -96,7 +88,7 @@ private:
   std::optional<PtrT> getOptimizedV5Target(PtrT addr) const;
   std::optional<PtrT> getResolverTarget(PtrT addr) const;
 
-  Dyld::Context &dCtx;
+  const Dyld::Context &dCtx;
   Utils::Accelerator<P> &accelerator;
   const Provider::PointerTracker<P> &ptrTracker;
 

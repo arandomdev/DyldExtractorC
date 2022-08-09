@@ -12,8 +12,7 @@ struct WriteProcedure {
   uint64_t size;
 };
 
-/// Optimize a mach-o file's offsets for output.
-///
+/// @brief Optimize a mach-o file's offsets for output.
 /// @returns A vector of write procedures.
 template <class A>
 std::vector<WriteProcedure> optimizeOffsets(Utils::ExtractionContext<A> &eCtx);

@@ -53,7 +53,7 @@ public:
   std::vector<LoadCommandT *> loadCommands;
   std::vector<typename SegmentContext<ro, P>> segments;
 
-  /// A wrapper around a MachO file.
+  /// @brief A wrapper around a MachO file.
   ///
   /// The access permissions is based on the main file provided. Calling this
   /// directly also implies that the context does not manage the file maps.
@@ -67,7 +67,7 @@ public:
           std::vector<MappingInfo> mainMappings,
           std::vector<std::tuple<bio::mapped_file, std::vector<MappingInfo>>>
               subFiles);
-  /// A writable wrapper around a MachO file.
+  /// @brief A writable wrapper around a MachO file.
   ///
   /// The files will be opened with private (copy on write) access.
   ///
@@ -80,7 +80,8 @@ public:
           std::vector<MappingInfo> mainMappings,
           std::vector<std::tuple<fs::path, std::vector<MappingInfo>>> subFiles);
 
-  /// Convert a vmaddr to it's file offset.
+  /// @brief Convert a vmaddr to it's file offset.
+  ///
   /// If the offset could not be found, a pair with 0 and
   /// nullptr will be returned.
   ///
@@ -88,7 +89,8 @@ public:
   /// @returns A pair of the file offset and its file.
   std::pair<uint64_t, FileT *> convertAddr(uint64_t addr) const;
 
-  /// Convert a vmaddr to it's file offset.
+  /// @brief Convert a vmaddr to it's file offset.
+  ///
   /// If the offset could not be found, nullptr will be
   /// returned.
   ///
@@ -96,7 +98,7 @@ public:
   /// @returns A file based pointer to the address
   FileT *convertAddrP(uint64_t addr) const;
 
-  /// Get load commands
+  /// @brief Get load commands
   ///
   /// If multiple is false, the first match is returned.
   ///
@@ -118,7 +120,7 @@ public:
     }
   }
 
-  /// Get load commands
+  /// @brief Get load commands
   ///
   /// If multiple is false, the first match is returned.
   ///
@@ -138,14 +140,13 @@ public:
     }
   }
 
-  /// Search for a segment
+  /// @brief Search for a segment
   ///
   /// @param segName The name of the segment.
   /// @returns The segment context. nullptr if not found.
   const SegmentContext<ro, P> *getSegment(const char *segName) const;
 
-  /// Search for a section
-  ///
+  /// @brief Search for a section
   /// @param segName The name of the segment, or nullptr.
   /// @param sectName The name of the section.
   /// @returns The segment and the section
@@ -153,8 +154,7 @@ public:
             const typename SegmentContext<ro, P>::SectionT *>
   getSection(const char *segName, const char *sectName) const;
 
-  /// Enumerate all segments
-  ///
+  /// @brief Enumerate all segments
   /// @param pred The predicate used to filter.
   /// @param callback The function to call for each section. Return false to
   ///     stop.
@@ -166,8 +166,7 @@ public:
                          typename SegmentContext<ro, P>::SectionT *)>
           callback);
 
-  /// Enumerate all segments
-  ///
+  /// @brief Enumerate all segments
   /// @param callback The function to call for each section. Return false to
   ///     stop.
   void enumerateSections(
@@ -175,8 +174,7 @@ public:
                          typename SegmentContext<ro, P>::SectionT *)>
           callback);
 
-  /// Check if the address is in the macho file
-  ///
+  /// @brief Check if the address is in the macho file
   /// @param addr
   /// @returns If the file contains the address
   bool containsAddr(const uint64_t addr) const;

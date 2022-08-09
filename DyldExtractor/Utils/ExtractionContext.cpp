@@ -2,51 +2,58 @@
 #include "Architectures.h"
 
 #include <Converter/LinkeditOptimizer.h>
-#include <Converter/Slide.h>
-#include <Converter/Stubs.h>
 
 using namespace Utils;
 
 template <class A>
-ExtractionContext<A>::ExtractionContext(Dyld::Context &dCtx,
+ExtractionContext<A>::ExtractionContext(const Dyld::Context &dCtx,
                                         Macho::Context<false, P> &mCtx,
                                         ActivityLogger &activity,
                                         Accelerator<P> &accelerator)
-    : dCtx(dCtx), mCtx(mCtx), activity(activity), logger(activity.logger),
-      accelerator(accelerator), pointerTracker(dCtx, logger),
-      disassembler(&mCtx, &activity, logger) {}
+    : dCtx(&dCtx), mCtx(&mCtx), activity(&activity), logger(activity.logger),
+      accelerator(&accelerator), pointerTracker(dCtx, logger),
+      disassembler(&mCtx, &activity, logger),
+      symbolizer(dCtx, mCtx, activity, logger, accelerator) {}
 
 template <class A>
 ExtractionContext<A>::ExtractionContext(ExtractionContext<A> &&other)
-    : dCtx(std::move(other.dCtx)), mCtx(std::move(other.mCtx)),
-      activity(std::move(other.activity)), logger(std::move(other.logger)),
-      accelerator(std::move(other.accelerator)),
+    : dCtx(other.dCtx), mCtx(other.mCtx), activity(other.activity),
+      logger(std::move(other.logger)), accelerator(other.accelerator),
       pointerTracker(std::move(other.pointerTracker)),
       disassembler(std::move(other.disassembler)),
-      linkeditTracker(other.linkeditTracker), symbolizer(other.symbolizer),
+      symbolizer(std::move(other.symbolizer)), exObjc(std::move(other.exObjc)),
+      linkeditTracker(other.linkeditTracker),
       hasRedactedIndirect(other.hasRedactedIndirect) {
+  other.dCtx = nullptr;
+  other.mCtx = nullptr;
+  other.activity = nullptr;
+  other.accelerator = nullptr;
   other.hasRedactedIndirect = false;
   other.linkeditTracker = nullptr;
-  other.symbolizer = nullptr;
 }
 
 template <class A>
 ExtractionContext<A> &
 ExtractionContext<A>::operator=(ExtractionContext<A> &&other) {
-  this->dCtx = std::move(other.dCtx);
-  this->mCtx = std::move(other.mCtx);
-  this->activity = std::move(other.activity);
+  this->dCtx = other.dCtx;
+  this->mCtx = other.mCtx;
+  this->activity = other.activity;
   this->logger = std::move(other.logger);
-  this->accelerator = std::move(other.accelerator);
+  this->accelerator = other.accelerator;
   this->pointerTracker = std::move(other.pointerTracker);
   this->disassembler = std::move(other.disassembler);
+  this->symbolizer = std::move(other.symbolizer);
+  this->exObjc = std::move(other.exObjc);
 
   this->linkeditTracker = other.linkeditTracker;
-  this->symbolizer = other.symbolizer;
-  other.linkeditTracker = nullptr;
-  other.symbolizer = nullptr;
-
   this->hasRedactedIndirect = other.hasRedactedIndirect;
+
+  other.dCtx = nullptr;
+  other.mCtx = nullptr;
+  other.activity = nullptr;
+  other.accelerator = nullptr;
+
+  other.linkeditTracker = nullptr;
   other.hasRedactedIndirect = false;
   return *this;
 }
@@ -54,9 +61,6 @@ ExtractionContext<A>::operator=(ExtractionContext<A> &&other) {
 template <class A> ExtractionContext<A>::~ExtractionContext() {
   if (linkeditTracker) {
     delete linkeditTracker;
-  }
-  if (symbolizer) {
-    delete symbolizer;
   }
 }
 

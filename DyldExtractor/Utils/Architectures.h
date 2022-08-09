@@ -17,16 +17,14 @@ public:
   using SPtrT = int64_t;
 };
 
-/// Align n up to a stride k
-///
+/// @brief Align n up to a stride k
 /// @param n The number to align.
 /// @param k The stride to align to.
 template <class T1, class T2> inline void align(T1 *n, T2 k) {
   *n = (*n + k - 1) / k * k;
 }
 
-/// Align n up to a stride k
-///
+/// @brief Align n up to a stride k
 /// @param n The number to align.
 /// @param k The stride to align to.
 /// @returns The aligned number.

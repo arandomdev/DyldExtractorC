@@ -33,7 +33,7 @@ public:
 
   LinkeditTracker(Macho::Context<false, P> &mCtx);
 
-  /// Add data to tracking
+  /// @brief Add data to tracking
   ///
   /// Data must be inside the linkedit segment, the offset field must be within
   /// the commands, and data size must be pointer aligned. Should be added in a
@@ -43,7 +43,7 @@ public:
   /// @return if the operation was successful
   bool addTrackingData(TrackedData data);
 
-  /// Insert data into the linkedit
+  /// @brief Insert data into the linkedit
   ///
   /// Segment command will be updated.
   ///
@@ -55,7 +55,7 @@ public:
   bool insertData(TrackedData metadata, TrackedData *after,
                   const uint8_t *data);
 
-  /// Resize a data region
+  /// @brief Resize a data region
   ///
   /// Segment command will be updated.
   ///
@@ -64,7 +64,7 @@ public:
   /// @returns If the operation was successful
   bool resizeData(TrackedData *data, uint32_t newSize);
 
-  /// Find the first data with the tag
+  /// @brief Find the first data with the tag
   ///
   /// @param tag The tag to search for.
   /// @returns A pointer to the data or nullptr if not found.

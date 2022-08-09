@@ -44,8 +44,8 @@ void updateLinkedit(Macho::Context<false, P> &mCtx, int32_t shiftDelta) {
 template <class A>
 std::vector<WriteProcedure>
 Converter::optimizeOffsets(Utils::ExtractionContext<A> &eCtx) {
-  eCtx.activity.get().update("Offset Optimizer", "Updating Offsets");
-  auto &mCtx = eCtx.mCtx.get();
+  eCtx.activity->update("Offset Optimizer", "Updating Offsets");
+  auto &mCtx = *eCtx.mCtx;
 
   std::vector<WriteProcedure> procedures;
   uint32_t dataHead = 0;

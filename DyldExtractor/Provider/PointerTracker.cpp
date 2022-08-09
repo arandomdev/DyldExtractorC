@@ -5,29 +5,19 @@
 using namespace Provider;
 
 template <class P>
-void PointerTracker<P>::TrackedPointer::setTarget(const PtrT target) {
-  *(PtrT *)loc = target;
-}
-
-template <class P>
-bool PointerTracker<P>::TrackedPointer::operator<(const TrackedPointer &rhs) {
-  return this->loc < rhs.loc;
-}
-
-template <class P>
 bool PointerTracker<P>::MappingSlideInfo::containsAddr(
     const uint64_t addr) const {
   return addr >= address && addr < address + size;
 }
 
 template <class P>
-bool PointerTracker<P>::MappingSlideInfo::containsData(
-    const uint8_t *addr) const {
-  return addr >= dataStart && addr < dataStart + size;
+const uint8_t *
+PointerTracker<P>::MappingSlideInfo::convertAddr(const uint64_t addr) const {
+  return (addr - address) + data;
 }
 
 template <class P>
-PointerTracker<P>::PointerTracker(Dyld::Context &dCtx,
+PointerTracker<P>::PointerTracker(const Dyld::Context &dCtx,
                                   std::shared_ptr<spdlog::logger> logger)
     : dCtx(&dCtx), logger(logger) {
   fillMappings();
@@ -35,11 +25,11 @@ PointerTracker<P>::PointerTracker(Dyld::Context &dCtx,
 
 template <class P>
 PointerTracker<P>::PtrT PointerTracker<P>::slideP(const PtrT addr) const {
-  auto ptr = dCtx->convertAddrP(addr);
   for (auto &map : mappings) {
     if (!map.containsAddr(addr)) {
       continue;
     }
+    auto ptr = map.convertAddr(addr);
 
     switch (map.slideInfoVersion) {
     case 1: {
@@ -85,39 +75,37 @@ PointerTracker<P>::PtrT PointerTracker<P>::slideP(const PtrT addr) const {
 }
 
 template <class P>
-PointerTracker<P>::TrackedPointer &
-PointerTracker<P>::trackP(uint8_t *loc, const PtrT target,
-                          const uint8_t *authSource) {
-  if (pointers.contains(loc)) {
-    return pointers[loc];
-  }
+void PointerTracker<P>::add(const PtrT addr, const PtrT target) {
+  pointers[addr] = target;
+}
 
-  uint16_t diversity = 0;
-  bool hasAddrDiv = false;
-  uint8_t key = 0;
+template <class P>
+void PointerTracker<P>::addAuth(const PtrT addr, AuthData data) {
+  authData[addr] = data;
+}
 
-  if (authSource) {
-    for (auto &map : mappings) {
-      if (map.containsData(authSource) && map.slideInfoVersion == 3) {
-        auto ptrInfo = (dyld_cache_slide_pointer3 *)authSource;
-        if (ptrInfo->auth.authenticated) {
-          diversity = ptrInfo->auth.diversityData;
-          hasAddrDiv = ptrInfo->auth.hasAddressDiversity;
-          key = ptrInfo->auth.key;
-        }
-      }
-    }
-  }
-
-  // return a reference to the pointer in the map
-  pointers[loc] = {loc, target, false, {diversity, hasAddrDiv, key}};
-  return pointers[loc];
+template <class P>
+void PointerTracker<P>::addBind(const PtrT addr, const SymbolicInfo *data) {
+  bindData[addr] = data;
 }
 
 template <class P>
 const std::vector<typename PointerTracker<P>::MappingSlideInfo> &
 PointerTracker<P>::getMappings() const {
   return mappings;
+}
+
+template <class P>
+const std::vector<const typename PointerTracker<P>::MappingSlideInfo *> &
+PointerTracker<P>::getSlideMappings() const {
+  return slideMappings;
+}
+
+template <class P>
+const std::map<typename PointerTracker<P>::PtrT,
+               typename PointerTracker<P>::PtrT> &
+PointerTracker<P>::getPointers() const {
+  return pointers;
 }
 
 template <class P> void PointerTracker<P>::fillMappings() {
@@ -142,7 +130,7 @@ template <class P> void PointerTracker<P>::fillMappings() {
   }
 
   // Get all mappings from all caches
-  auto extendInfo = [this](Dyld::Context &ctx) {
+  auto extendInfo = [this](const Dyld::Context &ctx) {
     if (!ctx.header->mappingWithSlideCount) {
       return;
     }
@@ -155,6 +143,9 @@ template <class P> void PointerTracker<P>::fillMappings() {
         auto slideVer = *(uint32_t *)slideInfo;
         mappings.emplace_back(ctx.file + i->fileOffset, i->address, i->size,
                               slideVer, slideInfo);
+      } else {
+        mappings.emplace_back(ctx.file + i->fileOffset, i->address, i->size, 0,
+                              nullptr);
       }
     }
   };
@@ -162,6 +153,16 @@ template <class P> void PointerTracker<P>::fillMappings() {
   extendInfo(*dCtx);
   for (auto &ctx : dCtx->subcaches) {
     extendInfo(ctx);
+  }
+
+  // fill other mappings as mappings should be constant now
+  for (const auto &map : mappings) {
+    if (map.slideInfo != nullptr) {
+      slideMappings.push_back(&map);
+    }
+    if (map.slideInfoVersion == 3) {
+      authMappings.push_back(&map);
+    }
   }
 }
 

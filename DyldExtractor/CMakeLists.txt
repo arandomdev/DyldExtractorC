@@ -1,11 +1,12 @@
 cmake_minimum_required(VERSION 3.12)
 
 add_library(DyldExtractor
+	Converter/Objc/ObjcFixer.cpp
+	Converter/Rebase/RebaseGenerator.cpp
+	Converter/Rebase/RebaseV1.cpp
 	Converter/Stubs/Arm64Utils.cpp
 	Converter/Stubs/ArmUtils.cpp
-	Converter/Stubs/Fixer.cpp
-	Converter/Stubs/SymbolicInfo.cpp
-	Converter/Stubs/Symbolizer.cpp
+	Converter/Stubs/StubFixer.cpp
 	Converter/LinkeditOptimizer.cpp
 	Converter/OffsetOptimizer.cpp
 	Converter/Slide.cpp
@@ -14,8 +15,11 @@ add_library(DyldExtractor
 	Macho/BindInfo.cpp
 	Macho/Context.cpp
 	Provider/Disassembler.cpp
+	Provider/ExtraData.cpp
 	Provider/PointerTracker.cpp
+	Provider/Symbolizer.cpp
 	Utils/ExtractionContext.cpp
+	Utils/Uleb128.cpp
 )
 
 target_link_libraries(DyldExtractor PUBLIC ${Boost_LIBRARIES})

@@ -3,7 +3,7 @@
 using namespace Converter;
 
 ArmUtils::ArmUtils(Utils::ExtractionContext<A> &eCtx)
-    : dCtx(eCtx.dCtx), accelerator(eCtx.accelerator),
+    : dCtx(*eCtx.dCtx), accelerator(*eCtx.accelerator),
       ptrTracker(eCtx.pointerTracker) {
   stubResolvers = {
       {StubFormat::normalV4, [this](PtrT a) { return getNormalV4Target(a); }},

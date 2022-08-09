@@ -1,16 +1,91 @@
 #include "Symbolizer.h"
 
+#include <ranges>
 #include <spdlog/spdlog.h>
 
-using namespace Converter;
+using namespace Provider;
 
+#pragma region SymbolicInfo
+bool SymbolicInfo::Symbol::isReExport() const {
+  if (exportFlags && *exportFlags & EXPORT_SYMBOL_FLAGS_REEXPORT) {
+    return true;
+  }
+
+  return false;
+}
+
+std::strong_ordering
+SymbolicInfo::Symbol::operator<=>(const Symbol &rhs) const {
+  if (auto cmp = this->isReExport() <=> rhs.isReExport(); cmp != 0) {
+    return cmp;
+  } else if (cmp = this->name <=> rhs.name; cmp != 0) {
+    return cmp;
+  } else if (cmp = this->ordinal <=> rhs.ordinal; cmp != 0) {
+    return cmp;
+  } else {
+    return std::strong_ordering::equal;
+  }
+}
+
+SymbolicInfo::SymbolicInfo(Symbol first) { symbols.insert(first); }
+
+SymbolicInfo::SymbolicInfo(std::set<Symbol> &symbols) : symbols(symbols) {
+  if (symbols.empty()) {
+    throw std::invalid_argument(
+        "Symbolic info cannot be constructed with an empty symbol set");
+  }
+}
+SymbolicInfo::SymbolicInfo(std::set<Symbol> &&symbols) : symbols(symbols) {
+  if (symbols.empty()) {
+    throw std::invalid_argument(
+        "Symbolic info cannot be constructed with an empty symbol set");
+  }
+}
+
+void SymbolicInfo::addSymbol(Symbol sym) { symbols.insert(sym); }
+
+const SymbolicInfo::Symbol &SymbolicInfo::preferredSymbol() const {
+  /**
+   * There are 3 comparisons, in the following order, Normal or ReExport, name,
+   * And ordinal. Normal is preferred, names are reverse compared, and highest
+   * ordinal is preferred.
+   */
+
+  const Symbol *current = &(*symbols.begin());
+
+  for (const auto &sym : symbols | std::views::drop(1)) {
+    if (!current->isReExport() && sym.isReExport()) {
+      current = &sym;
+      continue;
+    }
+
+    if (current->name < sym.name) {
+      current = &sym;
+      continue;
+    }
+
+    // uniqueness is guaranteed by set
+    if (current->ordinal < sym.ordinal) {
+      current = &sym;
+    }
+  }
+
+  return *current;
+}
+#pragma endregion SymbolicInfo
+
+#pragma region Symbolizer
 template <class A>
-Symbolizer<A>::Symbolizer(const Utils::ExtractionContext<A> &eCtx)
-    : dCtx(eCtx.dCtx), mCtx(eCtx.mCtx), activity(eCtx.activity),
-      logger(eCtx.logger), accelerator(eCtx.accelerator) {}
+Symbolizer<A>::Symbolizer(const Dyld::Context &dCtx,
+                          Macho::Context<false, P> &mCtx,
+                          ActivityLogger &activity,
+                          std::shared_ptr<spdlog::logger> logger,
+                          Utils::Accelerator<P> &accelerator)
+    : dCtx(&dCtx), mCtx(&mCtx), activity(&activity), logger(logger),
+      accelerator(&accelerator) {}
 
 template <class A> void Symbolizer<A>::enumerate() {
-  activity.update(std::nullopt, "Enumerating Symbols");
+  activity->update(std::nullopt, "Enumerating Symbols");
   enumerateExports();
   enumerateSymbols();
 }
@@ -26,15 +101,15 @@ const SymbolicInfo *Symbolizer<A>::symbolizeAddr(uint64_t addr) const {
 
 template <class A> void Symbolizer<A>::enumerateExports() {
   // Populate accelerator's pathToImage if needed
-  if (accelerator.pathToImage.empty()) {
-    for (auto image : dCtx.images) {
-      std::string path((char *)(dCtx.file + image->pathFileOffset));
-      accelerator.pathToImage[path] = image;
+  if (accelerator->pathToImage.empty()) {
+    for (auto image : dCtx->images) {
+      std::string path((char *)(dCtx->file + image->pathFileOffset));
+      accelerator->pathToImage[path] = image;
     }
   }
 
   // Process all dylibs including itself.
-  auto dylibs = mCtx.getLoadCommand<true, Macho::Loader::dylib_command>();
+  auto dylibs = mCtx->getLoadCommand<true, Macho::Loader::dylib_command>();
   for (uint64_t i = 0; i < dylibs.size(); i++) {
     const auto &exports = processDylibCmd(dylibs[i]);
     for (const auto &e : exports) {
@@ -50,8 +125,8 @@ template <class A> void Symbolizer<A>::enumerateExports() {
 
 template <class A> void Symbolizer<A>::enumerateSymbols() {
   auto linkeditFile =
-      mCtx.convertAddr(mCtx.getSegment("__LINKEDIT")->command->vmaddr).second;
-  auto symtab = mCtx.getLoadCommand<false, Macho::Loader::symtab_command>();
+      mCtx->convertAddr(mCtx->getSegment("__LINKEDIT")->command->vmaddr).second;
+  auto symtab = mCtx->getLoadCommand<false, Macho::Loader::symtab_command>();
   auto symbolEntries =
       (Macho::Loader::nlist<P> *)(linkeditFile + symtab->symoff);
   auto strings = (char *)(linkeditFile + symtab->stroff);
@@ -77,20 +152,20 @@ Symbolizer<A>::EntryMapT &Symbolizer<A>::processDylibCmd(
     const Macho::Loader::dylib_command *dylibCmd) const {
   const std::string dylibPath(
       (char *)((uint8_t *)dylibCmd + dylibCmd->dylib.name.offset));
-  if (accelerator.exportsCache.contains(dylibPath)) {
-    return accelerator.exportsCache[dylibPath];
+  if (accelerator->exportsCache.contains(dylibPath)) {
+    return accelerator->exportsCache[dylibPath];
   }
-  if (!accelerator.pathToImage.contains(dylibPath)) {
+  if (!accelerator->pathToImage.contains(dylibPath)) {
     SPDLOG_LOGGER_DEBUG(logger, "Unable to find image with path {}", dylibPath);
-    return accelerator.exportsCache[dylibPath]; // Empty map
+    return accelerator->exportsCache[dylibPath]; // Empty map
   }
 
   // dequeue empty map to fill
-  auto &exportsMap = accelerator.exportsCache[dylibPath];
+  auto &exportsMap = accelerator->exportsCache[dylibPath];
 
   // process exports
-  const auto imageInfo = accelerator.pathToImage.at(dylibPath);
-  const auto dylibCtx = dCtx.createMachoCtx<true, P>(imageInfo);
+  const auto imageInfo = accelerator->pathToImage.at(dylibPath);
+  const auto dylibCtx = dCtx->createMachoCtx<true, P>(imageInfo);
   const auto rawExports = readExports(dylibPath, dylibCtx);
   std::map<uint64_t, std::vector<ExportInfoTrie::Entry>> reExports;
   for (const auto &e : rawExports) {
@@ -197,3 +272,4 @@ template class Symbolizer<Utils::Arch::x86_64>;
 template class Symbolizer<Utils::Arch::arm>;
 template class Symbolizer<Utils::Arch::arm64>;
 template class Symbolizer<Utils::Arch::arm64_32>;
+#pragma endregion Symbolizer

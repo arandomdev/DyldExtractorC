@@ -6,7 +6,9 @@
 #include <spdlog/spdlog.h>
 
 #include <Converter/LinkeditOptimizer.h>
+#include <Converter/Objc.h>
 #include <Converter/OffsetOptimizer.h>
+#include <Converter/Rebase.h>
 #include <Converter/Slide.h>
 #include <Converter/Stubs.h>
 #include <Dyld/Context.h>
@@ -31,7 +33,7 @@ struct ProgramArguments {
     uint32_t raw;
     struct {
       uint32_t processSlideInfo : 1, optimizeLinkedit : 1, fixStubs : 1,
-          unused : 29;
+          fixObjc : 1, unused : 28;
     };
   } modulesDisabled;
 };
@@ -60,7 +62,7 @@ ProgramArguments parseArgs(int argc, char *argv[]) {
   program.add_argument("-s", "--skip-modules")
       .help("Skip certain modules. Most modules depend on each other, so use "
             "with caution. Useful for development. 1=processSlideInfo, "
-            "2=optimizeLinkedit, 4=fixStubs")
+            "2=optimizeLinkedit, 4=fixStubs, 8=fixObjc")
       .scan<'d', int>()
       .default_value(0);
 
@@ -122,6 +124,10 @@ void runImage(Dyld::Context &dCtx,
   if (!args.modulesDisabled.fixStubs) {
     Converter::fixStubs(eCtx);
   }
+  if (!args.modulesDisabled.fixObjc) {
+    Converter::fixObjc(eCtx);
+  }
+  Converter::generateRebase(eCtx);
   if (args.imbedVersion) {
     if constexpr (!std::is_same_v<typename A::P, Utils::Pointer64>) {
       SPDLOG_LOGGER_ERROR(

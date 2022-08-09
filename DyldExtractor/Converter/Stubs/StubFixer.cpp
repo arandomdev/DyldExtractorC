@@ -1,4 +1,4 @@
-#include "Fixer.h"
+#include "StubFixer.h"
 
 #include <spdlog/spdlog.h>
 
@@ -53,7 +53,7 @@ template <class A> void SymbolPointerCache<A>::scanPointers() {
              pAddr += sizeof(PtrT), indirectI++) {
           activity.update();
 
-          std::set<SymbolicInfo::Symbol> symbols;
+          std::set<Provider::SymbolicInfo::Symbol> symbols;
 
           // Bind records
           if (bindRecords.contains(pAddr)) {
@@ -74,14 +74,15 @@ template <class A> void SymbolPointerCache<A>::scanPointers() {
           if (const auto pTarget = delegate.pointerTracker.slideP(pAddr);
               pTarget) {
             const auto pFunc = delegate.resolveStubChain(pTarget);
-            if (const auto set = delegate.symbolizer->symbolizeAddr(pFunc);
+            if (const auto set = delegate.symbolizer.symbolizeAddr(pFunc);
                 set) {
               symbols.insert(set->symbols.begin(), set->symbols.end());
             }
           }
 
           if (!symbols.empty()) {
-            addPointerInfo(pType, pAddr, SymbolicInfo(std::move(symbols)));
+            addPointerInfo(pType, pAddr,
+                           Provider::SymbolicInfo(std::move(symbols)));
           } else {
             // Add to unnamed
             switch (pType) {
@@ -130,7 +131,7 @@ bool SymbolPointerCache<A>::isAvailable(PointerType pType, PtrT addr) {
 
 template <class A>
 void SymbolPointerCache<A>::namePointer(PointerType pType, PtrT addr,
-                                        SymbolicInfo info) {
+                                        Provider::SymbolicInfo info) {
   switch (pType) {
   case PointerType::normal:
     unnamed.normal.erase(addr);
@@ -151,8 +152,8 @@ void SymbolPointerCache<A>::namePointer(PointerType pType, PtrT addr,
 }
 
 template <class A>
-SymbolicInfo *SymbolPointerCache<A>::getPointerInfo(PointerType pType,
-                                                    PtrT addr) {
+Provider::SymbolicInfo *SymbolPointerCache<A>::getPointerInfo(PointerType pType,
+                                                              PtrT addr) {
   switch (pType) {
   case PointerType::normal:
     if (ptr.normal.contains(addr)) {
@@ -259,7 +260,7 @@ SymbolPointerCache<A>::getBindRecords() {
 
 template <class A>
 void SymbolPointerCache<A>::addPointerInfo(PointerType pType, PtrT pAddr,
-                                           SymbolicInfo info) {
+                                           Provider::SymbolicInfo info) {
   PtrMapT *pointers;
   ReverseMapT *reversePtrs;
   switch (pType) {
@@ -284,7 +285,7 @@ void SymbolPointerCache<A>::addPointerInfo(PointerType pType, PtrT pAddr,
   }
 
   // Add to normal cache
-  SymbolicInfo *newInfo;
+  Provider::SymbolicInfo *newInfo;
   if (pointers->contains(pAddr)) {
     newInfo = &pointers->at(pAddr);
     newInfo->symbols.insert(info.symbols.begin(), info.symbols.end());
@@ -303,8 +304,9 @@ void SymbolPointerCache<A>::addPointerInfo(PointerType pType, PtrT pAddr,
 template <class A>
 Arm64Fixer<A>::Arm64Fixer(StubFixer<A> &delegate)
     : delegate(delegate), mCtx(delegate.mCtx), activity(delegate.activity),
-      logger(delegate.logger), symbolizer(delegate.symbolizer),
-      pointerCache(delegate.pointerCache), arm64Utils(*delegate.arm64Utils) {
+      logger(delegate.logger), ptrTracker(delegate.pointerTracker),
+      symbolizer(delegate.symbolizer), pointerCache(delegate.pointerCache),
+      arm64Utils(*delegate.arm64Utils) {
   if constexpr (!std::is_same_v<A, Utils::Arch::arm64> &&
                 !std::is_same_v<A, Utils::Arch::arm64_32>) {
     assert(!"Arm64Fixer only supports arches arm64 and arm64_32");
@@ -354,7 +356,7 @@ template <class A> void Arm64Fixer<A>::fixStubHelpers() {
         // Point the pointer to the stub helper
         PtrT pAddr = mCtx.segments[bindRecord.segIndex].command->vmaddr +
                      (PtrT)bindRecord.segOffset;
-        *(PtrT *)mCtx.convertAddrP(pAddr) = helperAddr;
+        ptrTracker.add(pAddr, helperAddr);
       } else {
         SPDLOG_LOGGER_WARN(
             logger, "Unable to fix stub helper at {:#x} without bind info.",
@@ -375,7 +377,7 @@ template <class A> void Arm64Fixer<A>::fixStubHelpers() {
       }
 
       // Point the pointer to the helper
-      *(PtrT *)mCtx.convertAddrP(resolverInfo->targetPtr) = helperAddr;
+      ptrTracker.add(resolverInfo->targetPtr, helperAddr);
 
       helperAddr += resolverInfo->size;
       continue;
@@ -413,7 +415,7 @@ template <class A> void Arm64Fixer<A>::scanStubs() {
           const auto [sTarget, sFormat] = *sDataPair;
 
           // First symbolize the stub
-          std::set<SymbolicInfo::Symbol> symbols;
+          std::set<Provider::SymbolicInfo::Symbol> symbols;
 
           // Though indirect entries
           if (const auto [entry, string] =
@@ -448,7 +450,7 @@ template <class A> void Arm64Fixer<A>::scanStubs() {
 
           // Though its target function
           const auto sTargetFunc = arm64Utils.resolveStubChain(sAddr);
-          if (const auto info = symbolizer->symbolizeAddr(sTargetFunc); info) {
+          if (const auto info = symbolizer.symbolizeAddr(sTargetFunc); info) {
             symbols.insert(info->symbols.begin(), info->symbols.end());
           }
 
@@ -467,8 +469,8 @@ template <class A> void Arm64Fixer<A>::scanStubs() {
 }
 
 template <class A>
-void Arm64Fixer<A>::addStubInfo(PtrT addr, SymbolicInfo info) {
-  SymbolicInfo *newInfo;
+void Arm64Fixer<A>::addStubInfo(PtrT addr, Provider::SymbolicInfo info) {
+  Provider::SymbolicInfo *newInfo;
   if (stubMap.contains(addr)) {
     newInfo = &stubMap.at(addr);
     newInfo->symbols.insert(info.symbols.begin(), info.symbols.end());
@@ -481,7 +483,7 @@ void Arm64Fixer<A>::addStubInfo(PtrT addr, SymbolicInfo info) {
   }
 }
 
-/// Fix stubs, first pass
+/// @brief Fix stubs, first pass
 ///
 /// The first pass tries to remove non broken stubs, or trivially fixable stubs.
 template <class A> void Arm64Fixer<A>::fixPass1() {
@@ -582,7 +584,7 @@ template <class A> void Arm64Fixer<A>::fixPass1() {
   }
 }
 
-/// Fix stub, second pass
+/// @brief Fix stub, second pass
 ///
 /// The second pass converts optimized stubs.
 template <class A> void Arm64Fixer<A>::fixPass2() {
@@ -743,7 +745,7 @@ template <class A> void Arm64Fixer<A>::fixCallsites() {
     }
 
     const auto brTargetFunc = arm64Utils.resolveStubChain(brTarget);
-    const auto names = symbolizer->symbolizeAddr(brTargetFunc);
+    const auto names = symbolizer.symbolizeAddr(brTargetFunc);
     if (!names) {
       /**
        * Sometimes there are bytes of data in the text section
@@ -907,7 +909,7 @@ void ArmFixer::scanStubs() {
           const auto [sTarget, sFormat] = *sDataPair;
 
           // First symbolize the stub
-          std::set<SymbolicInfo::Symbol> symbols;
+          std::set<Provider::SymbolicInfo::Symbol> symbols;
 
           // Though indirect entries
           if (const auto [entry, string] =
@@ -949,7 +951,7 @@ void ArmFixer::scanStubs() {
       });
 }
 
-/// Fix stubs, first pass
+/// @brief Fix stubs, first pass
 ///
 /// The first pass tries to remove non broken stubs, or trivially fixable stubs.
 void ArmFixer::fixPass1() {
@@ -1008,7 +1010,7 @@ void ArmFixer::fixPass1() {
   }
 }
 
-/// Fix stub, second pass
+/// @brief Fix stub, second pass
 ///
 /// The second pass converts optimized stubs.
 void ArmFixer::fixPass2() {
@@ -1190,8 +1192,8 @@ void ArmFixer::fixCallsites() {
   }
 }
 
-void ArmFixer::addStubInfo(PtrT addr, SymbolicInfo info) {
-  SymbolicInfo *newInfo;
+void ArmFixer::addStubInfo(PtrT addr, Provider::SymbolicInfo info) {
+  Provider::SymbolicInfo *newInfo;
   if (stubMap.contains(addr)) {
     newInfo = &stubMap.at(addr);
     newInfo->symbols.insert(info.symbols.begin(), info.symbols.end());
@@ -1204,14 +1206,14 @@ void ArmFixer::addStubInfo(PtrT addr, SymbolicInfo info) {
   }
 }
 
-const SymbolicInfo *ArmFixer::symbolizeAddr(PtrT addr) const {
-  if (auto res = symbolizer->symbolizeAddr(addr); res) {
+const Provider::SymbolicInfo *ArmFixer::symbolizeAddr(PtrT addr) const {
+  if (auto res = symbolizer.symbolizeAddr(addr); res) {
     return res;
   } else {
     if (addr & 1) {
-      return symbolizer->symbolizeAddr(addr & -4);
+      return symbolizer.symbolizeAddr(addr & -4);
     } else {
-      return symbolizer->symbolizeAddr(addr | 1);
+      return symbolizer.symbolizeAddr(addr | 1);
     }
   }
 }
@@ -1220,11 +1222,10 @@ const SymbolicInfo *ArmFixer::symbolizeAddr(PtrT addr) const {
 #pragma region StubFixer
 template <class A>
 StubFixer<A>::StubFixer(Utils::ExtractionContext<A> &eCtx)
-    : eCtx(eCtx), mCtx(eCtx.mCtx), dCtx(eCtx.dCtx), activity(eCtx.activity),
-      logger(eCtx.logger), accelerator(eCtx.accelerator),
-      linkeditTracker(eCtx.linkeditTracker),
+    : eCtx(eCtx), dCtx(*eCtx.dCtx), mCtx(*eCtx.mCtx), activity(*eCtx.activity),
+      logger(eCtx.logger), accelerator(*eCtx.accelerator),
       pointerTracker(eCtx.pointerTracker), disasm(eCtx.disassembler),
-      symbolizer(new Symbolizer<A>(eCtx)),
+      symbolizer(eCtx.symbolizer), linkeditTracker(eCtx.linkeditTracker),
       linkeditFile(
           mCtx.convertAddr(mCtx.getSegment("__LINKEDIT")->command->vmaddr)
               .second),
@@ -1232,7 +1233,6 @@ StubFixer<A>::StubFixer(Utils::ExtractionContext<A> &eCtx)
       symtab(mCtx.getLoadCommand<false, Macho::Loader::symtab_command>()),
       dysymtab(mCtx.getLoadCommand<false, Macho::Loader::dysymtab_command>()),
       pointerCache(*this) {
-  eCtx.symbolizer = symbolizer;
   if constexpr (std::is_same_v<A, Utils::Arch::arm64> ||
                 std::is_same_v<A, Utils::Arch::arm64_32>) {
     arm64Utils.emplace(eCtx);
@@ -1274,7 +1274,7 @@ template <class A> void StubFixer<A>::fix() {
   }
 
   checkIndirectEntries();
-  symbolizer->enumerate();
+  symbolizer.enumerate();
   pointerCache.scanPointers();
 
   if constexpr (std::is_same_v<A, Utils::Arch::arm64> ||
@@ -1456,7 +1456,8 @@ template <class A> void StubFixer<A>::fixIndirectEntries() {
           continue;
         }
 
-        SymbolicInfo *pInfo = pointerCache.getPointerInfo(pType, pAddr);
+        Provider::SymbolicInfo *pInfo =
+            pointerCache.getPointerInfo(pType, pAddr);
         if (!pInfo) {
           if (!mCtx.containsAddr(pointerTracker.slideP(pAddr))) {
             SPDLOG_LOGGER_DEBUG(
@@ -1494,7 +1495,7 @@ template <class A> void StubFixer<A>::fixIndirectEntries() {
           continue;
         }
 
-        SymbolicInfo *sInfo = nullptr;
+        Provider::SymbolicInfo *sInfo = nullptr;
         if constexpr (std::is_same_v<A, Utils::Arch::arm64> ||
                       std::is_same_v<A, Utils::Arch::arm64_32>) {
           if (arm64Fixer->stubMap.contains(sAddr)) {
@@ -1615,7 +1616,7 @@ template <class A> bool StubFixer<A>::isInCodeRegions(PtrT addr) {
 template <class A> void Converter::fixStubs(Utils::ExtractionContext<A> &eCtx) {
   eCtx.disassembler.disasm();
 
-  eCtx.activity.get().update("Stub Fixer", "Starting Up");
+  eCtx.activity->update("Stub Fixer", "Starting Up");
 
   if constexpr (std::is_same_v<A, Utils::Arch::arm> ||
                 std::is_same_v<A, Utils::Arch::arm64> ||

@@ -1,10 +1,9 @@
-#ifndef __CONVERTER_STUBS_FIXER__
-#define __CONVERTER_STUBS_FIXER__
+#ifndef __CONVERTER_STUBS_STUBFIXER__
+#define __CONVERTER_STUBS_STUBFIXER__
 
 #include "../LinkeditOptimizer.h"
 #include "Arm64Utils.h"
 #include "ArmUtils.h"
-#include "Symbolizer.h"
 #include <Macho/BindInfo.h>
 #include <Utils/ExtractionContext.h>
 
@@ -27,13 +26,13 @@ public:
   PointerType getPointerType(const auto sect) const;
   void scanPointers();
 
-  /// Check if a pointer is free to use
+  /// @brief Check if a pointer is free to use
   bool isAvailable(PointerType pType, PtrT addr);
-  /// Provide symbolic info for a unnamed pointer
-  void namePointer(PointerType pType, PtrT addr, SymbolicInfo info);
-  SymbolicInfo *getPointerInfo(PointerType pType, PtrT addr);
+  /// @brief Provide symbolic info for a unnamed pointer
+  void namePointer(PointerType pType, PtrT addr, Provider::SymbolicInfo info);
+  Provider::SymbolicInfo *getPointerInfo(PointerType pType, PtrT addr);
 
-  using PtrMapT = std::map<PtrT, SymbolicInfo>;
+  using PtrMapT = std::map<PtrT, Provider::SymbolicInfo>;
   struct {
     PtrMapT normal;
     PtrMapT lazy;
@@ -62,7 +61,8 @@ public:
 
 private:
   std::map<PtrT, Macho::BindRecord> getBindRecords();
-  void addPointerInfo(PointerType pType, PtrT pAddr, SymbolicInfo info);
+  void addPointerInfo(PointerType pType, PtrT pAddr,
+                      Provider::SymbolicInfo info);
 
   StubFixer<A> &delegate;
   Macho::Context<false, P> &mCtx;
@@ -82,7 +82,7 @@ public:
   Arm64Fixer(StubFixer<A> &delegate);
   void fix();
 
-  std::map<PtrT, SymbolicInfo> stubMap;
+  std::map<PtrT, Provider::SymbolicInfo> stubMap;
 
 private:
   struct StubInfo {
@@ -99,13 +99,14 @@ private:
   void fixPass2();
   void fixCallsites();
 
-  void addStubInfo(PtrT sAddr, SymbolicInfo info);
+  void addStubInfo(PtrT sAddr, Provider::SymbolicInfo info);
 
   StubFixer<A> &delegate;
   Macho::Context<false, P> &mCtx;
   ActivityLogger &activity;
   std::shared_ptr<spdlog::logger> logger;
-  Symbolizer<A> *symbolizer;
+  Provider::PointerTracker<P> &ptrTracker;
+  Provider::Symbolizer<A> &symbolizer;
 
   SymbolPointerCache<A> &pointerCache;
   Arm64Utils<A> &arm64Utils;
@@ -130,7 +131,7 @@ public:
 
   void fix();
 
-  std::map<PtrT, SymbolicInfo> stubMap;
+  std::map<PtrT, Provider::SymbolicInfo> stubMap;
 
 private:
   struct StubInfo {
@@ -146,17 +147,17 @@ private:
   void fixPass2();
   void fixCallsites();
 
-  void addStubInfo(PtrT sAddr, SymbolicInfo info);
+  void addStubInfo(PtrT sAddr, Provider::SymbolicInfo info);
 
-  /// Encoding independent lookup
-  const SymbolicInfo *symbolizeAddr(PtrT addr) const;
+  /// @brief Encoding independent lookup
+  const Provider::SymbolicInfo *symbolizeAddr(PtrT addr) const;
 
   StubFixer<A> &delegate;
   Macho::Context<false, P> &mCtx;
   ActivityLogger &activity;
   std::shared_ptr<spdlog::logger> logger;
   Provider::Disassembler<A> &disasm;
-  Symbolizer<A> *symbolizer;
+  Provider::Symbolizer<A> &symbolizer;
 
   SymbolPointerCache<A> &pointerCache;
   ArmUtils &armUtils;
@@ -188,15 +189,15 @@ private:
   bool isInCodeRegions(PtrT addr);
 
   Utils::ExtractionContext<A> &eCtx;
-  Dyld::Context &dCtx;
+  const Dyld::Context &dCtx;
   Macho::Context<false, P> &mCtx;
   ActivityLogger &activity;
   std::shared_ptr<spdlog::logger> logger;
   Utils::Accelerator<P> &accelerator;
   Provider::PointerTracker<P> &pointerTracker;
   Provider::Disassembler<A> &disasm;
+  Provider::Symbolizer<A> &symbolizer;
   Converter::LinkeditTracker<P> *linkeditTracker;
-  Symbolizer<A> *symbolizer;
 
   uint8_t *linkeditFile;
   Macho::Loader::dyld_info_command *dyldInfo;
@@ -216,4 +217,4 @@ template <class A> void fixStubs(Utils::ExtractionContext<A> &eCtx);
 
 } // namespace Converter
 
-#endif // __CONVERTER_STUBS_FIXER__
+#endif // __CONVERTER_STUBS_STUBFIXER__

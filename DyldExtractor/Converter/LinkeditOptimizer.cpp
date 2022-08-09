@@ -209,14 +209,12 @@ class StringPool {
 public:
   StringPool();
 
-  /// Add a string to the string pool.
-  ///
+  /// @brief Add a string to the string pool.
   /// @param string The string to add.
   /// @returns The string index.
   uint32_t addString(const char *string);
 
-  /// Write strings
-  ///
+  /// @brief Write strings
   /// @param dest Buffer to write to.
   /// @returns The size of the strings written.
   uint32_t writeStrings(uint8_t *dest);
@@ -298,7 +296,7 @@ private:
   uint32_t copyRedactedLocalSymbols(uint8_t *newLinkedit, uint32_t &offset);
 
   Utils::ExtractionContext<A> &eCtx;
-  Dyld::Context &dCtx;
+  const Dyld::Context &dCtx;
   Macho::Context<false, P> &mCtx;
   ActivityLogger &activity;
   std::shared_ptr<spdlog::logger> logger;
@@ -321,9 +319,9 @@ private:
 
 template <class A>
 LinkeditOptimizer<A>::LinkeditOptimizer(Utils::ExtractionContext<A> &eCtx)
-    : eCtx(eCtx), dCtx(eCtx.dCtx), mCtx(eCtx.mCtx), activity(eCtx.activity),
+    : eCtx(eCtx), dCtx(*eCtx.dCtx), mCtx(*eCtx.mCtx), activity(*eCtx.activity),
       logger(eCtx.logger), linkeditTracker(*eCtx.linkeditTracker) {
-  auto &mCtx = eCtx.mCtx.get();
+  auto &mCtx = *eCtx.mCtx;
 
   auto [offset, file] =
       mCtx.convertAddr(mCtx.getSegment("__LINKEDIT")->command->vmaddr);
@@ -851,7 +849,7 @@ uint32_t LinkeditOptimizer<A>::copyRedactedLocalSymbols(uint8_t *newLinkedit,
 
 /// Check all load commands for unknown load commands
 template <class A> void checkLoadCommands(Utils::ExtractionContext<A> &eCtx) {
-  for (auto lc : eCtx.mCtx.get().loadCommands) {
+  for (auto lc : eCtx.mCtx->loadCommands) {
     switch (lc->cmd) {
     case LC_SEGMENT:    // segment_command
     case LC_SEGMENT_64: // segment_command_64
@@ -933,10 +931,10 @@ bool Converter::isRedactedIndirect(uint32_t entry) {
 
 template <class A>
 void Converter::optimizeLinkedit(Utils::ExtractionContext<A> &eCtx) {
-  eCtx.activity.get().update("Linkedit Optimizer", "Optimizing Linkedit");
+  eCtx.activity->update("Linkedit Optimizer", "Optimizing Linkedit");
   checkLoadCommands(eCtx);
-  eCtx.linkeditTracker = new LinkeditTracker<typename A::P>(eCtx.mCtx);
-  auto &mCtx = eCtx.mCtx.get();
+  eCtx.linkeditTracker = new LinkeditTracker<typename A::P>(*eCtx.mCtx);
+  auto &mCtx = *eCtx.mCtx;
 
   auto linkeditSeg = mCtx.getSegment("__LINKEDIT");
   if (!linkeditSeg) {

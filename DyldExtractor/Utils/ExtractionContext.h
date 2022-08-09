@@ -6,7 +6,9 @@
 #include <Logger/ActivityLogger.h>
 #include <Macho/Context.h>
 #include <Provider/Disassembler.h>
+#include <Provider/ExtraData.h>
 #include <Provider/PointerTracker.h>
+#include <Provider/Symbolizer.h>
 #include <spdlog/logger.h>
 
 namespace Converter {
@@ -21,23 +23,24 @@ template <class A> class ExtractionContext {
   using P = A::P;
 
 public:
-  std::reference_wrapper<Dyld::Context> dCtx;
-  std::reference_wrapper<Macho::Context<false, P>> mCtx;
-  std::reference_wrapper<ActivityLogger> activity;
+  const Dyld::Context *dCtx;
+  Macho::Context<false, P> *mCtx;
+  ActivityLogger *activity;
   std::shared_ptr<spdlog::logger> logger;
-  std::reference_wrapper<Accelerator<P>> accelerator;
+  Accelerator<P> *accelerator;
 
   Provider::PointerTracker<P> pointerTracker;
   Provider::Disassembler<A> disassembler;
+  Provider::Symbolizer<A> symbolizer;
+  Provider::ExtraData<P> exObjc;
 
   Converter::LinkeditTracker<P> *linkeditTracker = nullptr;
-  Converter::Symbolizer<A> *symbolizer = nullptr;
 
   // Linkedit optimizer guarantees that undefined symbols are added last in the
   // symtab.
   bool hasRedactedIndirect = false;
 
-  ExtractionContext(Dyld::Context &dCtx, Macho::Context<false, P> &mCtx,
+  ExtractionContext(const Dyld::Context &dCtx, Macho::Context<false, P> &mCtx,
                     ActivityLogger &activity, Accelerator<P> &accelerator);
   ExtractionContext(const ExtractionContext<A> &other) = delete;
   ExtractionContext(ExtractionContext<A> &&other);

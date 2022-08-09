@@ -1,7 +1,6 @@
 #ifndef __CONVERTER_STUBS__
 #define __CONVERTER_STUBS__
 
-#include "Stubs/Fixer.h"
-#include "Stubs/Symbolizer.h"
+#include "Stubs/StubFixer.h"
 
 #endif // __CONVERTER_STUBS__

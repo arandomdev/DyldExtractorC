@@ -21,7 +21,7 @@ struct SymbolizerExportEntry {
   uint64_t address;
   ExportInfoTrie::Entry entry;
 
-  /// This constructor should only be used for searching
+  /// @brief This constructor should only be used for searching
   SymbolizerExportEntry(std::string n) : address(0), entry(n, ExportInfo()) {}
   SymbolizerExportEntry(uint64_t a, ExportInfoTrie::Entry e)
       : address(a), entry(e) {}

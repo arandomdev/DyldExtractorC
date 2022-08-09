@@ -167,14 +167,20 @@ std::pair<const SegmentContext<ro, P> *,
 Context<ro, P>::getSection(const char *segName, const char *sectName) const {
   std::size_t segSize = 0;
   if (segName != nullptr) {
-    segSize = strlen(segName) + 1;
-    if (segSize > 16) {
+    segSize = strlen(segName);
+    if (segSize < 16) {
+      // Include null terminator
+      segSize++;
+    } else if (segSize > 16) {
       throw std::invalid_argument("Segment name is too long.");
     }
   }
 
-  std::size_t sectSize = strlen(sectName) + 1;
-  if (sectSize > 16) {
+  std::size_t sectSize = strlen(sectName);
+  if (sectSize < 16) {
+    // Include null terminator
+    sectSize++;
+  } else if (sectSize > 16) {
     throw std::invalid_argument("Section name is too long.");
   }
 

@@ -21,7 +21,7 @@ public:
 
     std::string opStr;
 
-    /// Create an invalid instruction
+    /// @brief Create an invalid instruction
     Instruction(PtrT addr, uint8_t size);
     Instruction(cs_insn *raw);
   };
