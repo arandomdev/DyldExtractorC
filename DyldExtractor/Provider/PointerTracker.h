@@ -10,7 +10,7 @@
 
 #include <stddef.h>
 
-namespace Provider {
+namespace DyldExtractor::Provider {
 
 template <class P> class PointerTracker {
   using PtrT = P::PtrT;
@@ -43,11 +43,8 @@ public:
 
   PointerTracker(const Dyld::Context &dCtx,
                  std::shared_ptr<spdlog::logger> logger);
-  PointerTracker(const PointerTracker &o) = delete;
-  PointerTracker(PointerTracker &&o) = default;
-  PointerTracker &operator=(const PointerTracker &o) = delete;
-  PointerTracker &operator=(PointerTracker &&o) = default;
-  ~PointerTracker() = default;
+  PointerTracker(const PointerTracker &) = delete;
+  PointerTracker &operator=(const PointerTracker &) = delete;
 
   /// @brief Slide the pointer at the address
   /// @param address The address of the pointer.
@@ -72,7 +69,7 @@ public:
   /// @param target The target address.
   void add(const PtrT addr, const PtrT target);
 
-  /// @brief Add data to tracking
+  /// @brief Add a struct to tracking
   /// @tparam T The type of data
   /// @param addr The address of the struct
   /// @param data The new targets of the pointers
@@ -93,10 +90,11 @@ public:
   /// @param sAddr The address to copy auth data from
   template <class T> void copyAuthS(PtrT addr, PtrT sAddr) {
     // Check if the source address is within an auth mapping
-    for (const auto map : authMappings) {
-      if (map->containsAddr(sAddr)) {
+    for (const auto mapI : authMappings) {
+      const auto &map = mappings.at(mapI);
+      if (map.containsAddr(sAddr)) {
         // Copy auth data for each pointer if needed
-        auto sLoc = map->convertAddr(sAddr);
+        auto sLoc = map.convertAddr(sAddr);
         for (auto offset : T::PTRS) {
           auto p = (dyld_cache_slide_pointer3 *)(sLoc + offset);
           if (p->auth.authenticated) {
@@ -113,15 +111,23 @@ public:
   /// @brief Add bind data for a pointer
   /// @param addr The address of the pointer
   /// @param data Symbolic info for the bind
-  void addBind(const PtrT addr, const SymbolicInfo *data);
+  void addBind(const PtrT addr, std::shared_ptr<SymbolicInfo> data);
 
   /// @brief Get all mappings
   const std::vector<MappingSlideInfo> &getMappings() const;
 
   /// @brief Get all mappings with slide info
-  const std::vector<const MappingSlideInfo *> &getSlideMappings() const;
+  std::vector<const MappingSlideInfo *> getSlideMappings() const;
 
   const std::map<PtrT, PtrT> &getPointers() const;
+
+  const std::map<PtrT, AuthData> &getAuths() const;
+
+  /// @brief Get additional binds, does not contain binds from opcodes.
+  const std::map<PtrT, std::shared_ptr<SymbolicInfo>> &getBinds() const;
+
+  /// @brief Get the page size.
+  uint32_t getPageSize() const;
 
 private:
   void fillMappings();
@@ -130,14 +136,14 @@ private:
   std::shared_ptr<spdlog::logger> logger;
 
   std::vector<MappingSlideInfo> mappings;
-  std::vector<const MappingSlideInfo *> slideMappings;
-  std::vector<const MappingSlideInfo *> authMappings;
+  std::vector<int> slideMappings;
+  std::vector<int> authMappings;
 
   std::map<PtrT, PtrT> pointers;
-  std::unordered_map<PtrT, AuthData> authData;
-  std::unordered_map<PtrT, const SymbolicInfo *> bindData;
+  std::map<PtrT, AuthData> authData;
+  std::map<PtrT, std::shared_ptr<SymbolicInfo>> bindData;
 };
 
-}; // namespace Provider
+}; // namespace DyldExtractor::Provider
 
 #endif // __PROVIDER_POINTERTRACKER__

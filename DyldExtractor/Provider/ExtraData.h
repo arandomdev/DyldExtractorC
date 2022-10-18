@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <vector>
 
-namespace Provider {
+namespace DyldExtractor::Provider {
 
 template <class P> class ExtraData {
   using PtrT = P::PtrT;
@@ -13,6 +13,10 @@ template <class P> class ExtraData {
 public:
   ExtraData() = default;
   ExtraData(PtrT addr);
+  ExtraData(const ExtraData &) = delete;
+  ExtraData(ExtraData &&) = default;
+  ExtraData &operator=(const ExtraData &) = delete;
+  ExtraData &operator=(ExtraData &&) = default;
 
   /// @brief Add data, invalidates all pointers
   /// @tparam T The type of data
@@ -44,6 +48,6 @@ private:
   std::vector<uint8_t> store;
 };
 
-} // namespace Provider
+} // namespace DyldExtractor::Provider
 
 #endif // __PROVIDER_EXTRADATA__

@@ -3,18 +3,18 @@
 
 #include <exception>
 
+using namespace DyldExtractor;
 using namespace Converter;
 
 // Update all linkedit data commands
 template <class P>
 void updateLinkedit(Macho::Context<false, P> &mCtx, int32_t shiftDelta) {
   for (auto linkeditData :
-       mCtx.getLoadCommand<true, Macho::Loader::linkedit_data_command>()) {
+       mCtx.getAllLCs<Macho::Loader::linkedit_data_command>()) {
     linkeditData->dataoff += linkeditData->dataoff ? shiftDelta : 0;
   }
 
-  auto dyldInfo =
-      mCtx.getLoadCommand<false, Macho::Loader::dyld_info_command>();
+  auto dyldInfo = mCtx.getFirstLC<Macho::Loader::dyld_info_command>();
   if (dyldInfo != nullptr) {
     dyldInfo->rebase_off += dyldInfo->rebase_off ? shiftDelta : 0;
     dyldInfo->bind_off += dyldInfo->bind_off ? shiftDelta : 0;
@@ -23,31 +23,27 @@ void updateLinkedit(Macho::Context<false, P> &mCtx, int32_t shiftDelta) {
     dyldInfo->export_off += dyldInfo->export_off ? shiftDelta : 0;
   }
 
-  auto symtab = mCtx.getLoadCommand<false, Macho::Loader::symtab_command>();
-  if (symtab != nullptr) {
-    symtab->symoff += symtab->symoff ? shiftDelta : 0;
-    symtab->stroff += symtab->stroff ? shiftDelta : 0;
-  }
+  auto symtab = mCtx.getFirstLC<Macho::Loader::symtab_command>();
+  symtab->symoff += symtab->symoff ? shiftDelta : 0;
+  symtab->stroff += symtab->stroff ? shiftDelta : 0;
 
-  auto dysymtab = mCtx.getLoadCommand<false, Macho::Loader::dysymtab_command>();
-  if (dysymtab != nullptr) {
-    dysymtab->tocoff += dysymtab->tocoff ? shiftDelta : 0;
-    dysymtab->ntoc += dysymtab->ntoc ? shiftDelta : 0;
-    dysymtab->modtaboff += dysymtab->modtaboff ? shiftDelta : 0;
-    dysymtab->extrefsymoff += dysymtab->extrefsymoff ? shiftDelta : 0;
-    dysymtab->indirectsymoff += dysymtab->indirectsymoff ? shiftDelta : 0;
-    dysymtab->extreloff += dysymtab->extreloff ? shiftDelta : 0;
-    dysymtab->locreloff += dysymtab->locreloff ? shiftDelta : 0;
-  }
+  auto dysymtab = mCtx.getFirstLC<Macho::Loader::dysymtab_command>();
+  dysymtab->tocoff += dysymtab->tocoff ? shiftDelta : 0;
+  dysymtab->ntoc += dysymtab->ntoc ? shiftDelta : 0;
+  dysymtab->modtaboff += dysymtab->modtaboff ? shiftDelta : 0;
+  dysymtab->extrefsymoff += dysymtab->extrefsymoff ? shiftDelta : 0;
+  dysymtab->indirectsymoff += dysymtab->indirectsymoff ? shiftDelta : 0;
+  dysymtab->extreloff += dysymtab->extreloff ? shiftDelta : 0;
+  dysymtab->locreloff += dysymtab->locreloff ? shiftDelta : 0;
 }
 
 template <class A>
-std::vector<WriteProcedure>
+std::vector<OffsetWriteProcedure>
 Converter::optimizeOffsets(Utils::ExtractionContext<A> &eCtx) {
   eCtx.activity->update("Offset Optimizer", "Updating Offsets");
   auto &mCtx = *eCtx.mCtx;
 
-  std::vector<WriteProcedure> procedures;
+  std::vector<OffsetWriteProcedure> procedures;
   uint32_t dataHead = 0;
   for (auto &segment : mCtx.segments) {
     // verify sizes
@@ -69,7 +65,8 @@ Converter::optimizeOffsets(Utils::ExtractionContext<A> &eCtx) {
       section->offset += shiftDelta;
     }
 
-    if (memcmp(&segment.command->segname, "__LINKEDIT\x00", 11) == 0) {
+    if (memcmp(&segment.command->segname, SEG_LINKEDIT, sizeof(SEG_LINKEDIT)) ==
+        0) {
       updateLinkedit(mCtx, shiftDelta);
     }
 
@@ -82,7 +79,7 @@ Converter::optimizeOffsets(Utils::ExtractionContext<A> &eCtx) {
 }
 
 #define X(T)                                                                   \
-  template std::vector<WriteProcedure> Converter::optimizeOffsets<T>(          \
+  template std::vector<OffsetWriteProcedure> Converter::optimizeOffsets<T>(    \
       Utils::ExtractionContext<T> & eCtx);
 X(Utils::Arch::x86_64)
 X(Utils::Arch::arm)

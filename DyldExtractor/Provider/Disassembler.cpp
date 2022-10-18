@@ -1,6 +1,8 @@
 #include "Disassembler.h"
 
+using namespace DyldExtractor;
 using namespace Provider;
+
 #define INVALID_INSN 0
 
 template <class A>
@@ -14,11 +16,11 @@ Disassembler<A>::Instruction::Instruction(cs_insn *raw)
 
 template <class A>
 Disassembler<A>::Disassembler(Macho::Context<false, P> *mCtx,
-                              ActivityLogger *activity,
+                              Logger::Activity *activity,
                               std::shared_ptr<spdlog::logger> logger)
     : activity(activity), logger(logger) {
   // Get data about text
-  if (auto [seg, sect] = mCtx->getSection("__TEXT", "__text"); sect) {
+  if (auto [seg, sect] = mCtx->getSection(SEG_TEXT, SECT_TEXT); sect) {
     textData = mCtx->convertAddrP(sect->addr);
     textAddr = sect->addr;
     textSize = sect->size;
@@ -28,12 +30,11 @@ Disassembler<A>::Disassembler(Macho::Context<false, P> *mCtx,
   }
 
   // get data in code entries
-  if (auto dicCmd =
-          mCtx->getLoadCommand<false, Macho::Loader::linkedit_data_command>(
-              {LC_DATA_IN_CODE})) {
+  if (auto dicCmd = mCtx->getFirstLC<Macho::Loader::linkedit_data_command>(
+          {LC_DATA_IN_CODE})) {
     if (dicCmd->datasize) {
       auto linkeditFile =
-          mCtx->convertAddr(mCtx->getSegment("__LINKEDIT")->command->vmaddr)
+          mCtx->convertAddr(mCtx->getSegment(SEG_LINKEDIT)->command->vmaddr)
               .second;
       diceStart = (data_in_code_entry *)(linkeditFile + dicCmd->dataoff);
       diceEnd = diceStart + (dicCmd->datasize / sizeof(data_in_code_entry));
@@ -43,7 +44,7 @@ Disassembler<A>::Disassembler(Macho::Context<false, P> *mCtx,
   // Create Capstone engine
   cs_err err;
   if constexpr (std::is_same_v<A, Utils::Arch::x86_64>) {
-    throw std::logic_error("Not implemented");
+    err = cs_open(CS_ARCH_X86, CS_MODE_64, &handle);
   } else if constexpr (std::is_same_v<A, Utils::Arch::arm>) {
     err = cs_open(CS_ARCH_ARM, CS_MODE_THUMB, &handle);
   } else if constexpr (std::is_same_v<A, Utils::Arch::arm64> ||
@@ -173,17 +174,6 @@ template <class A> uint32_t Disassembler<A>::recover(uint32_t offset) {
 }
 
 template <class A> uint32_t Disassembler<A>::recoverArm(uint32_t offset) {
-  auto data = textData + offset;
-  uint16_t thumb1 = *(uint16_t *)data;
-  uint16_t thumb2 = *((uint16_t *)data + 1);
-  uint32_t arm = (thumb1 << 16) | thumb2;
-
-  // ignore VFP instructions
-  if ((arm & 0x0F000E10) == 0x0E000A00) {
-    instructions.emplace_back(textAddr + offset, 4);
-    return offset + 4;
-  }
-
   instructions.emplace_back(textAddr + offset, 2);
   return offset + 2;
 }

@@ -1,10 +1,12 @@
 #include "ArmUtils.h"
 
+using namespace DyldExtractor;
 using namespace Converter;
+using namespace Stubs;
 
 ArmUtils::ArmUtils(Utils::ExtractionContext<A> &eCtx)
     : dCtx(*eCtx.dCtx), accelerator(*eCtx.accelerator),
-      ptrTracker(eCtx.pointerTracker) {
+      ptrTracker(eCtx.ptrTracker) {
   stubResolvers = {
       {StubFormat::normalV4, [this](PtrT a) { return getNormalV4Target(a); }},
       {StubFormat::optimizedV5,
@@ -13,7 +15,7 @@ ArmUtils::ArmUtils(Utils::ExtractionContext<A> &eCtx)
 }
 
 std::optional<ArmUtils::StubBinderInfo>
-ArmUtils::isStubBinder(PtrT addr) const {
+ArmUtils::isStubBinder(const PtrT addr) const {
   /**
    * 29d8b2bc 04 c0 2d e5 str r12,[sp,#local_4]!
    * 29d8b2c0 10 c0 9f e5 ldr r12,[DAT_29d8b2d8]
@@ -26,8 +28,8 @@ ArmUtils::isStubBinder(PtrT addr) const {
    * 29d8b2dc 28 8d 19 05 undefined4 05198D28h -> dyld_stub_binder
    */
 
-  addr &= -4;
-  const auto p = (const uint32_t *)dCtx.convertAddrP(addr);
+  auto plainAddr = addr & -4;
+  const auto p = (const uint32_t *)dCtx.convertAddrP(plainAddr);
   if (p == nullptr) {
     return std::nullopt;
   }
@@ -46,19 +48,19 @@ ArmUtils::isStubBinder(PtrT addr) const {
     return std::nullopt;
   } else {
     const auto privPtrOffset = p[7];
-    return StubBinderInfo{addr + 8 + 8 + privPtrOffset, 0x24};
+    return StubBinderInfo{plainAddr + 8 + 8 + privPtrOffset, 0x24};
   }
 }
 
-std::optional<ArmUtils::PtrT> ArmUtils::getStubHelperData(PtrT addr) const {
+std::optional<ArmUtils::PtrT>
+ArmUtils::getStubHelperData(const PtrT addr) const {
   /**
    * 29d8b2f8 00 c0 9f e5 ldr r12,[DAT_29d8b300]
    * 29d8b2fc ee ff ff ea b   stub_helpers
    * 29d8b300 39 00 00 00 undefined4 00000039h
    */
 
-  addr &= -4;
-  const auto p = (const uint32_t *)dCtx.convertAddrP(addr);
+  const auto p = (const uint32_t *)dCtx.convertAddrP(addr & -4);
   if (p == nullptr) {
     return std::nullopt;
   }
@@ -73,7 +75,7 @@ std::optional<ArmUtils::PtrT> ArmUtils::getStubHelperData(PtrT addr) const {
 }
 
 std::optional<ArmUtils::ResolverData>
-ArmUtils::getResolverData(PtrT addr) const {
+ArmUtils::getResolverData(const PtrT addr) const {
   /**
    * 20b159f8 0f402de9 stmdb sp!,{r0 r1 r2 r3 lr}
    * 20b159fc d858fefa blx   _vDSP_FFTCSBFirst4S
@@ -86,8 +88,8 @@ ArmUtils::getResolverData(PtrT addr) const {
    * 20b15a18 7877c20c UNK   0CC27778h
    */
 
-  addr &= -4;
-  const auto p = (const uint32_t *)dCtx.convertAddrP(addr);
+  auto plainAddr = addr & -4;
+  const auto p = (const uint32_t *)dCtx.convertAddrP(plainAddr);
   if (p == nullptr) {
     return std::nullopt;
   }
@@ -114,15 +116,15 @@ ArmUtils::getResolverData(PtrT addr) const {
     const uint32_t imm24 = blx & 0x00FFFFFF;
     const bool H = (blx & 0x01000000) >> 24;
     const int32_t imm32 = signExtend<int32_t, 26>((imm24 << 2) | (H << 1));
-    targetFunc = addr + 4 + 8 + imm32;
+    targetFunc = plainAddr + 4 + 8 + imm32;
   }
 
-  PtrT targetPtr = addr + 12 + 8 + resolverData;
+  PtrT targetPtr = plainAddr + 12 + 8 + resolverData;
   PtrT size = 0x24;
   return ResolverData{targetFunc, targetPtr, size};
 }
 
-ArmUtils::PtrT ArmUtils::resolveStubChain(PtrT addr) {
+ArmUtils::PtrT ArmUtils::resolveStubChain(const PtrT addr) {
   if (accelerator.armResolvedChains.contains(addr)) {
     return accelerator.armResolvedChains[addr];
   }
@@ -152,11 +154,12 @@ ArmUtils::resolveStub(const PtrT addr) const {
   return std::nullopt;
 }
 
-std::optional<ArmUtils::PtrT> ArmUtils::getNormalV4LdrAddr(PtrT addr) const {
+std::optional<ArmUtils::PtrT>
+ArmUtils::getNormalV4LdrAddr(const PtrT addr) const {
   // Reference getNormalV4Target
 
-  addr &= -4;
-  const auto p = (const uint32_t *)dCtx.convertAddrP(addr);
+  auto plainAddr = addr & -4;
+  const auto p = (const uint32_t *)dCtx.convertAddrP(plainAddr);
   if (p == nullptr) {
     return std::nullopt;
   }
@@ -169,7 +172,7 @@ std::optional<ArmUtils::PtrT> ArmUtils::getNormalV4LdrAddr(PtrT addr) const {
   }
 
   const auto stubData = p[3];
-  return addr + 12 + stubData;
+  return plainAddr + 12 + stubData;
 }
 
 void ArmUtils::writeNormalV4Stub(uint8_t *loc, const PtrT stubAddr,
@@ -188,7 +191,8 @@ void ArmUtils::writeNormalV4Stub(uint8_t *loc, const PtrT stubAddr,
   *(int32_t *)(p + 3) = (int32_t)ldrAddr - stubAddr - 12;
 }
 
-std::optional<ArmUtils::PtrT> ArmUtils::getNormalV4Target(PtrT addr) const {
+std::optional<ArmUtils::PtrT>
+ArmUtils::getNormalV4Target(const PtrT addr) const {
   /**
    * 04 c0 9f e5 ldr r12,[DAT_00007f18]
    * 0c c0 8f e0 add r12,pc,r12
@@ -196,8 +200,8 @@ std::optional<ArmUtils::PtrT> ArmUtils::getNormalV4Target(PtrT addr) const {
    * f0 00 00 00 UNK 000000F0h
    */
 
-  addr &= -4;
-  const auto p = (const uint32_t *)dCtx.convertAddrP(addr);
+  auto plainAddr = addr & -4;
+  const auto p = (const uint32_t *)dCtx.convertAddrP(plainAddr);
   if (p == nullptr) {
     return std::nullopt;
   }
@@ -210,10 +214,11 @@ std::optional<ArmUtils::PtrT> ArmUtils::getNormalV4Target(PtrT addr) const {
   }
 
   const auto stubData = p[3];
-  return ptrTracker.slideP(addr + 12 + stubData);
+  return ptrTracker.slideP(plainAddr + 12 + stubData);
 }
 
-std::optional<ArmUtils::PtrT> ArmUtils::getOptimizedV5Target(PtrT addr) const {
+std::optional<ArmUtils::PtrT>
+ArmUtils::getOptimizedV5Target(const PtrT addr) const {
   /**
    * 576a3a28 00 c0 9f e5 ldr r12,[DAT_576a3a30]
    * 576a3a2c 0c f0 8f e0 add pc=>LAB_4692f7c4,pc,r12
@@ -221,8 +226,8 @@ std::optional<ArmUtils::PtrT> ArmUtils::getOptimizedV5Target(PtrT addr) const {
    * 576a3a34 fe de ff e7 udf #0xfdee TRAP
    */
 
-  addr &= -4;
-  const auto p = (const uint32_t *)dCtx.convertAddrP(addr);
+  auto plainAddr = addr & -4;
+  const auto p = (const uint32_t *)dCtx.convertAddrP(plainAddr);
   if (p == nullptr) {
     return std::nullopt;
   }
@@ -236,10 +241,11 @@ std::optional<ArmUtils::PtrT> ArmUtils::getOptimizedV5Target(PtrT addr) const {
 
   const auto stubData = p[2];
 
-  return (addr + 12 + stubData);
+  return (plainAddr + 12 + stubData);
 }
 
-std::optional<ArmUtils::PtrT> ArmUtils::getResolverTarget(PtrT addr) const {
+std::optional<ArmUtils::PtrT>
+ArmUtils::getResolverTarget(const PtrT addr) const {
   if (const auto res = getResolverData(addr); res) {
     return res->targetFunc;
   } else {

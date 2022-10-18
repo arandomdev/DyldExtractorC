@@ -1,6 +1,6 @@
 #include <Converter/Stubs/Arm64Utils.h>
 #include <Dyld/Context.h>
-#include <Logger/ActivityLogger.h>
+#include <Logger/Activity.h>
 #include <Utils/ExtractionContext.h>
 #include <argparse/argparse.hpp>
 #include <filesystem>
@@ -9,6 +9,7 @@
 #include "config.h"
 
 namespace fs = std::filesystem;
+using namespace DyldExtractor;
 
 struct ProgramArguments {
   fs::path cache_path;
@@ -59,24 +60,24 @@ ProgramArguments parseArgs(int argc, char *argv[]) {
 
 template <class A>
 std::string
-formatStubFormat(typename Converter::Arm64Utils<A>::StubFormat format) {
+formatStubFormat(typename Converter::Stubs::Arm64Utils<A>::StubFormat format) {
   switch (format) {
-  case Converter::Arm64Utils<A>::StubFormat::StubNormal:
+  case Converter::Stubs::Arm64Utils<A>::StubFormat::StubNormal:
     return "StubNormal";
     break;
-  case Converter::Arm64Utils<A>::StubFormat::StubOptimized:
+  case Converter::Stubs::Arm64Utils<A>::StubFormat::StubOptimized:
     return "StubOptimized";
     break;
-  case Converter::Arm64Utils<A>::StubFormat::AuthStubNormal:
+  case Converter::Stubs::Arm64Utils<A>::StubFormat::AuthStubNormal:
     return "AuthStubNormal";
     break;
-  case Converter::Arm64Utils<A>::StubFormat::AuthStubOptimized:
+  case Converter::Stubs::Arm64Utils<A>::StubFormat::AuthStubOptimized:
     return "AuthStubOptimized";
     break;
-  case Converter::Arm64Utils<A>::StubFormat::AuthStubResolver:
+  case Converter::Stubs::Arm64Utils<A>::StubFormat::AuthStubResolver:
     return "AuthStubResolver";
     break;
-  case Converter::Arm64Utils<A>::StubFormat::Resolver:
+  case Converter::Stubs::Arm64Utils<A>::StubFormat::Resolver:
     return "Resolver";
     break;
 
@@ -121,11 +122,11 @@ template <class A> void program(Dyld::Context &dCtx, ProgramArguments &args) {
   if (args.resolveChain) {
     if constexpr (std::is_same_v<A, Utils::Arch::arm64>) {
       auto mCtx = dCtx.createMachoCtx<false, typename A::P>(dCtx.images[0]);
-      ActivityLogger activity("dyldex_info", std::cout, false);
-      Utils::Accelerator<typename A::P> accelerator;
+      Logger::Activity activity("dyldex_info", std::cout, false);
+      Provider::Accelerator<typename A::P> accelerator;
       Utils::ExtractionContext<A> eCtx(dCtx, mCtx, activity, accelerator);
 
-      Converter::Arm64Utils<A> arm64Utils(eCtx);
+      Converter::Stubs::Arm64Utils<A> arm64Utils(eCtx);
 
       auto currentAddr = args.address;
       while (true) {
@@ -137,7 +138,8 @@ template <class A> void program(Dyld::Context &dCtx, ProgramArguments &args) {
         auto [newAddr, format] = *data;
         std::cout << std::format("{}: {:#x} -> {:#x}",
                                  formatStubFormat<A>(format), currentAddr,
-                                 newAddr);
+                                 newAddr)
+                  << std::endl;
         if (currentAddr == newAddr) {
           break;
         } else {

@@ -1,6 +1,8 @@
-#include "Uleb128.h"
+#include "Leb128.h"
 
 #include <stdexcept>
+
+using namespace DyldExtractor;
 
 uint64_t Utils::readUleb128(const uint8_t *&p, const uint8_t *end) {
   uint64_t result = 0;
@@ -39,7 +41,7 @@ int64_t Utils::readSleb128(const uint8_t *&p, const uint8_t *end) {
   return result;
 }
 
-void appendUleb128(std::vector<uint8_t> &out, uint64_t value) {
+void Utils::appendUleb128(std::vector<uint8_t> &out, uint64_t value) {
   uint8_t byte;
   do {
     byte = value & 0x7F;
@@ -51,7 +53,7 @@ void appendUleb128(std::vector<uint8_t> &out, uint64_t value) {
   } while (byte >= 0x80);
 }
 
-void appendSleb128(std::vector<uint8_t> &out, int64_t value) {
+void Utils::appendSleb128(std::vector<uint8_t> &out, int64_t value) {
   bool isNeg = (value < 0);
   uint8_t byte;
   bool more;

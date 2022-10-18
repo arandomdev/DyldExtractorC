@@ -1,10 +1,12 @@
 #include "Arm64Utils.h"
 
+using namespace DyldExtractor;
 using namespace Converter;
+using namespace Stubs;
 
 template <class A>
 Arm64Utils<A>::Arm64Utils(const Utils::ExtractionContext<A> &eCtx)
-    : dCtx(*eCtx.dCtx), ptrTracker(eCtx.pointerTracker),
+    : dCtx(*eCtx.dCtx), ptrTracker(eCtx.ptrTracker),
       accelerator(*eCtx.accelerator) {
 
   stubResolvers = {
@@ -203,7 +205,24 @@ Arm64Utils<A>::PtrT Arm64Utils<A>::resolveStubChain(const PtrT addr) {
 }
 
 template <class A>
-std::optional<typename Arm64Utils<A>::PtrT>
+std::vector<
+    std::pair<typename Arm64Utils<A>::PtrT, typename Arm64Utils<A>::StubFormat>>
+Arm64Utils<A>::resolveStubChainExtended(const PtrT addr) {
+  std::vector<std::pair<PtrT, StubFormat>> chain;
+  PtrT target = addr;
+  while (true) {
+    if (auto stubData = resolveStub(target); stubData != std::nullopt) {
+      chain.push_back(*stubData);
+      target = stubData->first;
+    } else {
+      break;
+    }
+  }
+  return chain;
+}
+
+template <class A>
+std::optional<uint32_t>
 Arm64Utils<A>::getStubHelperData(const PtrT addr) const {
   auto p = (const uint32_t *)dCtx.convertAddrP(addr);
   if (p == nullptr) {
@@ -292,7 +311,7 @@ void Arm64Utils<A>::writeNormalStub(uint8_t *loc, const PtrT stubAddr,
   const SPtrT immlo = (adrpDelta << 17) & (0x60000000);
   instructions[0] = (uint32_t)((0x90000010) | immlo | immhi);
 
-  if constexpr (std::is_same_v<P, Utils::Pointer64>) {
+  if constexpr (std::is_same_v<P, Utils::Arch::Pointer64>) {
     // LDR X16, [X16, lp@pageoff]
     const int64_t ldrOffset = ldrAddr - (ldrAddr & -4096);
     const int64_t imm12 = (ldrOffset << 7) & 0x3FFC00;
@@ -494,7 +513,7 @@ Arm64Utils<A>::getAuthStubResolverTarget(const PtrT addr) const {
   const auto adrp = p[0];
   const auto ldr = p[1];
   const auto braaz = p[2];
-  if ((adrp & 0x9F000000) != 0x90000000 || (ldr & 0xFFC00000) != 0xB9400000 ||
+  if ((adrp & 0x9F000000) != 0x90000000 || (ldr & 0xBFC00000) != 0xB9400000 ||
       (braaz & 0xFEFFF800) != 0xD61F0800) {
     return std::nullopt;
   }
@@ -528,7 +547,5 @@ typename Arm64Utils<A>::PtrT Arm64Utils<A>::getLdrOffset(const uint32_t ldrI) {
   return (ldrI & 0x3FFC00) >> (10 - scale);
 }
 
-template class Arm64Utils<Utils::Arch::x86_64>;
-template class Arm64Utils<Utils::Arch::arm>;
 template class Arm64Utils<Utils::Arch::arm64>;
 template class Arm64Utils<Utils::Arch::arm64_32>;

@@ -1,13 +1,15 @@
-#include "ActivityLogger.h"
+#include "Activity.h"
 
 #include <exception>
 
-LoggerStreamBuffer::LoggerStreamBuffer(std::streambuf *buffer)
-    : buffer(buffer) {}
+using namespace DyldExtractor;
+using namespace Logger;
 
-int LoggerStreamBuffer::sync() { return buffer->pubsync(); }
+StreamBuffer::StreamBuffer(std::streambuf *buffer) : buffer(buffer) {}
 
-int LoggerStreamBuffer::overflow(int c) {
+int StreamBuffer::sync() { return buffer->pubsync(); }
+
+int StreamBuffer::overflow(int c) {
   if (c != std::char_traits<char>::eof()) {
     if (needPrefix &&
         prefix.size() != buffer->sputn(prefix.c_str(), prefix.size())) {
@@ -19,8 +21,7 @@ int LoggerStreamBuffer::overflow(int c) {
   return buffer->sputc(c);
 }
 
-ActivityLogger::ActivityLogger(std::string name, std::ostream &output,
-                               bool enableActivity)
+Activity::Activity(std::string name, std::ostream &output, bool enableActivity)
     : activityStream(output), loggerStream(&streamBuffer),
       streamBuffer(output.rdbuf()), enableActivity(enableActivity),
       lastActivityUpdate(std::chrono::high_resolution_clock::now()),
@@ -39,9 +40,8 @@ ActivityLogger::ActivityLogger(std::string name, std::ostream &output,
   logger = std::make_shared<spdlog::logger>(name, streamSink);
 }
 
-void ActivityLogger::update(std::optional<std::string> moduleName,
-                            std::optional<std::string> message,
-                            bool fullUpdate) {
+void Activity::update(std::optional<std::string> moduleName,
+                      std::optional<std::string> message, bool fullUpdate) {
   if (!enableActivity) {
     return;
   }
@@ -95,16 +95,16 @@ void ActivityLogger::update(std::optional<std::string> moduleName,
   }
 }
 
-void ActivityLogger::stopActivity() {
+void Activity::stopActivity() {
   if (enableActivity) {
     enableActivity = false;
     activityStream << "\n";
   }
 }
 
-std::ostream &ActivityLogger::getLoggerStream() { return loggerStream; }
+std::ostream &Activity::getLoggerStream() { return loggerStream; }
 
-std::string ActivityLogger::_formatTime(std::chrono::seconds seconds) {
+std::string Activity::_formatTime(std::chrono::seconds seconds) {
   auto minutes = std::chrono::duration_cast<std::chrono::minutes>(seconds);
   seconds -= minutes;
 

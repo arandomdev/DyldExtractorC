@@ -5,21 +5,22 @@
 #include <argparse/argparse.hpp>
 #include <spdlog/spdlog.h>
 
-#include <Converter/LinkeditOptimizer.h>
-#include <Converter/Objc.h>
+#include <Converter/Linkedit/Linkedit.h>
+#include <Converter/Objc/Objc.h>
 #include <Converter/OffsetOptimizer.h>
-#include <Converter/Rebase.h>
 #include <Converter/Slide.h>
-#include <Converter/Stubs.h>
+#include <Converter/Stubs/Stubs.h>
 #include <Dyld/Context.h>
-#include <Logger/ActivityLogger.h>
+#include <Logger/Activity.h>
 #include <Macho/Context.h>
-#include <Utils/Accelerator.h>
+#include <Provider/Accelerator.h>
+#include <Provider/Validator.h>
 #include <Utils/ExtractionContext.h>
 
 #include "config.h"
 
 namespace fs = std::filesystem;
+using namespace DyldExtractor;
 
 #pragma region Arguments
 struct ProgramArguments {
@@ -33,7 +34,7 @@ struct ProgramArguments {
     uint32_t raw;
     struct {
       uint32_t processSlideInfo : 1, optimizeLinkedit : 1, fixStubs : 1,
-          fixObjc : 1, unused : 28;
+          fixObjc : 1, generateMetadata : 1, unused : 27;
     };
   } modulesDisabled;
 };
@@ -62,7 +63,7 @@ ProgramArguments parseArgs(int argc, char *argv[]) {
   program.add_argument("-s", "--skip-modules")
       .help("Skip certain modules. Most modules depend on each other, so use "
             "with caution. Useful for development. 1=processSlideInfo, "
-            "2=optimizeLinkedit, 4=fixStubs, 8=fixObjc")
+            "2=optimizeLinkedit, 4=fixStubs, 8=fixObjc, 16=generateMetadata")
       .scan<'d', int>()
       .default_value(0);
 
@@ -99,12 +100,22 @@ ProgramArguments parseArgs(int argc, char *argv[]) {
 
 template <class A>
 void runImage(Dyld::Context &dCtx,
-              Utils::Accelerator<typename A::P> &accelerator,
+              Provider::Accelerator<typename A::P> &accelerator,
               const dyld_cache_image_info *imageInfo,
               const std::string imagePath, const std::string imageName,
               const ProgramArguments &args, std::ostream &logStream) {
+
+  // validate
+  auto mCtx = dCtx.createMachoCtx<false, typename A::P>(imageInfo);
+  try {
+    Provider::Validator<typename A::P>(mCtx).validate();
+  } catch (const std::exception &e) {
+    std::cout << std::format("Validation Error: {}", e.what());
+    return;
+  }
+
   // Setup context
-  ActivityLogger activity("DyldEx_" + imageName, logStream, false);
+  Logger::Activity activity("DyldEx_" + imageName, logStream, false);
   activity.logger->set_pattern("[%-8l %s:%#] %v");
   if (args.verbose) {
     activity.logger->set_level(spdlog::level::trace);
@@ -112,7 +123,6 @@ void runImage(Dyld::Context &dCtx,
     activity.logger->set_level(spdlog::level::info);
   }
 
-  auto mCtx = dCtx.createMachoCtx<false, typename A::P>(imageInfo);
   Utils::ExtractionContext<A> eCtx(dCtx, mCtx, activity, accelerator);
 
   if (!args.modulesDisabled.processSlideInfo) {
@@ -127,9 +137,11 @@ void runImage(Dyld::Context &dCtx,
   if (!args.modulesDisabled.fixObjc) {
     Converter::fixObjc(eCtx);
   }
-  Converter::generateRebase(eCtx);
+  if (!args.modulesDisabled.generateMetadata) {
+    Converter::generateMetadata(eCtx);
+  }
   if (args.imbedVersion) {
-    if constexpr (!std::is_same_v<typename A::P, Utils::Pointer64>) {
+    if constexpr (!std::is_same_v<typename A::P, Utils::Arch::Pointer64>) {
       SPDLOG_LOGGER_ERROR(
           activity.logger,
           "Unable to imbed version info in a non 64 bit image.");
@@ -159,7 +171,7 @@ void runImage(Dyld::Context &dCtx,
 
 template <class A>
 void runAllImages(Dyld::Context &dCtx, ProgramArguments &args) {
-  ActivityLogger activity("DyldEx_All", std::cout, true);
+  Logger::Activity activity("DyldEx_All", std::cout, true);
   activity.logger->set_pattern("[%T:%e %-8l %s:%#] %v");
   if (args.verbose) {
     activity.logger->set_level(spdlog::level::trace);
@@ -170,7 +182,7 @@ void runAllImages(Dyld::Context &dCtx, ProgramArguments &args) {
   int imagesProcessed = 0;
   std::ostringstream summaryStream;
 
-  Utils::Accelerator<typename A::P> accelerator;
+  Provider::Accelerator<typename A::P> accelerator;
 
   const int numberOfImages = (int)dCtx.images.size();
   for (int i = 0; i < numberOfImages; i++) {

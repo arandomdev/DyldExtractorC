@@ -1,7 +1,4 @@
-﻿# CMakeList.txt : Top-level CMake project file, do global configuration
-# and include sub-projects here.
-#
-cmake_minimum_required(VERSION 3.12)
+﻿cmake_minimum_required(VERSION 3.12)
 project("DyldExtractorC" VERSION 0.0.1)
 
 # Check endianness
@@ -51,6 +48,7 @@ add_subdirectory(External/argparse)
 set(CAPSTONE_ARCHITECTURE_DEFAULT OFF)
 set(CAPSTONE_ARM_SUPPORT ON)
 set(CAPSTONE_ARM64_SUPPORT ON)
+set(CAPSTONE_X86_SUPPORT ON)
 add_subdirectory(External/capstone)
 set_target_properties(capstone PROPERTIES COMPILE_OPTIONS "-w")
 

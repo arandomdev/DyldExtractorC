@@ -1,5 +1,5 @@
-#ifndef __UTILS_ACCELERATOR__
-#define __UTILS_ACCELERATOR__
+#ifndef __PROVIDER_ACCELERATOR__
+#define __PROVIDER_ACCELERATOR__
 
 #include <dyld/dyld_cache_format.h>
 #include <map>
@@ -12,7 +12,7 @@
 #include <dyld/Trie.hpp>
 #pragma warning(pop)
 
-namespace Utils {
+namespace DyldExtractor::Provider {
 
 namespace AcceleratorTypes {
 
@@ -25,19 +25,24 @@ struct SymbolizerExportEntry {
   SymbolizerExportEntry(std::string n) : address(0), entry(n, ExportInfo()) {}
   SymbolizerExportEntry(uint64_t a, ExportInfoTrie::Entry e)
       : address(a), entry(e) {}
-};
-const static inline auto SymbolizerExportEntryHash =
-    [](const SymbolizerExportEntry &e) {
+
+  struct Hash {
+    std::size_t operator()(const SymbolizerExportEntry &e) const {
       return std::hash<std::string>{}(e.entry.name);
-    };
-const static inline auto SymbolizerExportEntryEqual =
-    [](const SymbolizerExportEntry &a, const SymbolizerExportEntry &b) {
+    }
+  };
+
+  struct KeyEqual {
+    bool operator()(const SymbolizerExportEntry &a,
+                    const SymbolizerExportEntry &b) const {
       return a.entry.name == b.entry.name;
-    };
+    }
+  };
+};
+
 using SymbolizerExportEntryMapT =
-    std::unordered_multiset<SymbolizerExportEntry,
-                            decltype(SymbolizerExportEntryHash),
-                            decltype(SymbolizerExportEntryEqual)>;
+    std::unordered_multiset<SymbolizerExportEntry, SymbolizerExportEntry::Hash,
+                            SymbolizerExportEntry::KeyEqual>;
 
 }; // namespace AcceleratorTypes
 
@@ -46,16 +51,16 @@ template <class P> class Accelerator {
   using PtrT = P::PtrT;
 
 public:
-  // Symbolizer
+  // Provider::Symbolizer
   std::map<std::string, const dyld_cache_image_info *> pathToImage;
   std::map<std::string, AcceleratorTypes::SymbolizerExportEntryMapT>
       exportsCache;
 
-  // Arch Utils
+  // Converter::Stubs::Arm64Utils, Converter::Stubs::ArmUtils
   std::map<PtrT, PtrT> arm64ResolvedChains;
   std::map<PtrT, PtrT> armResolvedChains;
 
-  // StubFixer
+  // Converter::Stubs::Fixer
   struct CodeRegion {
     PtrT start;
     PtrT end;
@@ -65,11 +70,9 @@ public:
 
   Accelerator() = default;
   Accelerator(const Accelerator &) = delete;
-  Accelerator(Accelerator &&other) = default;
   Accelerator &operator=(const Accelerator &) = delete;
-  Accelerator &operator=(Accelerator &&other) = default;
 };
 
-}; // namespace Utils
+}; // namespace DyldExtractor::Provider
 
-#endif // __UTILS_ACCELERATOR__
+#endif // __PROVIDER_ACCELERATOR__

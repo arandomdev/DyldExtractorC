@@ -1,18 +1,20 @@
-#ifndef __LOGGER_ACTIVITYLOGGER__
-#define __LOGGER_ACTIVITYLOGGER__
+#ifndef __LOGGER_ACTIVITY__
+#define __LOGGER_ACTIVITY__
 
 #include <chrono>
 #include <iostream>
 #include <spdlog/logger.h>
 #include <spdlog/sinks/ostream_sink.h>
 
+namespace DyldExtractor::Logger {
+
 /// @brief A wrapper for a streambuf that allows an activity indicator.
 ///
 /// Essentially does new line, moves line up, and insert line, before
 /// every line.
-class LoggerStreamBuffer : public std::streambuf {
+class StreamBuffer : public std::streambuf {
 public:
-  LoggerStreamBuffer(std::streambuf *buffer);
+  StreamBuffer(std::streambuf *buffer);
 
 private:
   std::streambuf *buffer;
@@ -26,7 +28,7 @@ private:
   int overflow(int c);
 };
 
-class ActivityLogger {
+class Activity {
 public:
   std::shared_ptr<spdlog::logger> logger;
 
@@ -34,12 +36,12 @@ public:
   /// @param name The name of the logger.
   /// @param output The output stream.
   /// @param enableActivity Enable or disable the activity indicator.
-  ActivityLogger(std::string name, std::ostream &output, bool enableActivity);
+  Activity(std::string name, std::ostream &output, bool enableActivity);
 
-  ActivityLogger(const ActivityLogger &) = delete;
-  ActivityLogger(const ActivityLogger &&) = delete;
-  ActivityLogger &operator=(ActivityLogger &) = delete;
-  ActivityLogger &operator=(ActivityLogger &&) = delete;
+  Activity(const Activity &) = delete;
+  Activity(const Activity &&) = delete;
+  Activity &operator=(Activity &) = delete;
+  Activity &operator=(Activity &&) = delete;
 
   /// Update the activity indicator.
   ///
@@ -59,7 +61,7 @@ public:
 private:
   std::ostream &activityStream;
   std::ostream loggerStream;
-  LoggerStreamBuffer streamBuffer;
+  StreamBuffer streamBuffer;
 
   bool enableActivity;
   std::string currentModule = "---";
@@ -75,4 +77,6 @@ private:
   std::string _formatTime(std::chrono::seconds seconds);
 };
 
-#endif // __LOGGER_ACTIVITYLOGGER__
+} // namespace DyldExtractor::Logger
+
+#endif // __LOGGER_ACTIVITY__

@@ -5,20 +5,21 @@
 #include <argparse/argparse.hpp>
 #include <spdlog/spdlog.h>
 
-#include <Converter/LinkeditOptimizer.h>
-#include <Converter/Objc.h>
+#include <Converter/Linkedit/Linkedit.h>
+#include <Converter/Objc/Objc.h>
 #include <Converter/OffsetOptimizer.h>
-#include <Converter/Rebase.h>
 #include <Converter/Slide.h>
-#include <Converter/Stubs.h>
+#include <Converter/Stubs/Stubs.h>
 #include <Dyld/Context.h>
-#include <Logger/ActivityLogger.h>
+#include <Logger/Activity.h>
 #include <Macho/Context.h>
+#include <Provider/Validator.h>
 #include <Utils/ExtractionContext.h>
 
 #include "config.h"
 
 namespace fs = std::filesystem;
+using namespace DyldExtractor;
 
 struct ProgramArguments {
   fs::path cache_path;
@@ -33,7 +34,7 @@ struct ProgramArguments {
     uint32_t raw;
     struct {
       uint32_t processSlideInfo : 1, optimizeLinkedit : 1, fixStubs : 1,
-          fixObjc : 1, unused : 28;
+          fixObjc : 1, generateMetadata : 1, unused : 27;
     };
   } modulesDisabled;
 };
@@ -67,7 +68,7 @@ ProgramArguments parseArgs(int argc, char *argv[]) {
   program.add_argument("-s", "--skip-modules")
       .help("Skip certain modules. Most modules depend on each other, so use "
             "with caution. Useful for development. 1=processSlideInfo, "
-            "2=optimizeLinkedit, 4=fixStubs, 8=fixObjc")
+            "2=optimizeLinkedit, 4=fixStubs, 8=fixObjc, 16=generateMetadata")
       .scan<'d', int>()
       .default_value(0);
 
@@ -130,6 +131,8 @@ getImages(Dyld::Context &dCtx, std::optional<std::string> filter) {
 
 template <class A>
 void extractImage(Dyld::Context &dCtx, ProgramArguments args) {
+  using P = A::P;
+
   // Get the image info of the extraction target
   assert(args.extractImage != std::nullopt);
 
@@ -146,8 +149,18 @@ void extractImage(Dyld::Context &dCtx, ProgramArguments args) {
   auto imageInfo = dCtx.images[imageIndex];
   std::cout << fmt::format("Extracting '{}'", imagePath) << std::endl;
 
-  // Setup context
-  ActivityLogger activity("DyldEx", std::cout, true);
+  auto mCtx = dCtx.createMachoCtx<false, P>(imageInfo);
+
+  // validate
+  try {
+    Provider::Validator<P>(mCtx).validate();
+  } catch (const std::exception &e) {
+    std::cout << std::format("Validation Error: {}", e.what());
+    return;
+  }
+
+  // Setup context and extract
+  Logger::Activity activity("DyldEx", std::cout, true);
   activity.logger->set_pattern("[%T:%e %-8l %s:%#] %v");
   if (args.verbose) {
     activity.logger->set_level(spdlog::level::trace);
@@ -156,11 +169,10 @@ void extractImage(Dyld::Context &dCtx, ProgramArguments args) {
   }
   activity.update("DyldEx", "Starting up");
 
-  auto mCtx = dCtx.createMachoCtx<false, typename A::P>(imageInfo);
-  Utils::Accelerator<typename A::P> accelerator;
+  Provider::Accelerator<P> accelerator;
   Utils::ExtractionContext<A> eCtx(dCtx, mCtx, activity, accelerator);
 
-  // Convert
+  // Process
   if (!args.modulesDisabled.processSlideInfo) {
     Converter::processSlideInfo(eCtx);
   }
@@ -173,9 +185,12 @@ void extractImage(Dyld::Context &dCtx, ProgramArguments args) {
   if (!args.modulesDisabled.fixObjc) {
     Converter::fixObjc(eCtx);
   }
-  Converter::generateRebase(eCtx);
+  if (!args.modulesDisabled.generateMetadata) {
+    Converter::generateMetadata(eCtx);
+  }
+
   if (args.imbedVersion) {
-    if constexpr (!std::is_same_v<typename A::P, Utils::Pointer64>) {
+    if constexpr (!std::is_same_v<P, Utils::Arch::Pointer64>) {
       SPDLOG_LOGGER_ERROR(
           activity.logger,
           "Unable to imbed version info in a non 64 bit image.");

@@ -4,9 +4,9 @@
 #include <Utils/Architectures.h>
 #include <Utils/ExtractionContext.h>
 
-namespace Converter {
+namespace DyldExtractor::Converter {
 
-struct WriteProcedure {
+struct OffsetWriteProcedure {
   uint64_t writeOffset;
   const uint8_t *source;
   uint64_t size;
@@ -15,8 +15,9 @@ struct WriteProcedure {
 /// @brief Optimize a mach-o file's offsets for output.
 /// @returns A vector of write procedures.
 template <class A>
-std::vector<WriteProcedure> optimizeOffsets(Utils::ExtractionContext<A> &eCtx);
+std::vector<OffsetWriteProcedure>
+optimizeOffsets(Utils::ExtractionContext<A> &eCtx);
 
-}; // namespace Converter
+}; // namespace DyldExtractor::Converter
 
 #endif // __CONVERTER_OFFSETOPTIMIZER__

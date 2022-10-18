@@ -1,36 +1,14 @@
-/* -*- mode: C++; c-basic-offset: 4; tab-width: 4 -*-*
- *
- * Copyright (c) 2009-2010 Apple Inc. All rights reserved.
- *
- * @APPLE_LICENSE_HEADER_START@
- *
- * This file contains Original Code and/or Modifications of Original Code
- * as defined in and that are subject to the Apple Public Source License
- * Version 2.0 (the 'License'). You may not use this file except in
- * compliance with the License. Please obtain a copy of the License at
- * http://www.opensource.apple.com/apsl/ and read it before using this
- * file.
- *
- * The Original Code and all software distributed under the License are
- * distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
- * EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
- * INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
- * Please see the License for the specific language governing rights and
- * limitations under the License.
- *
- * @APPLE_LICENSE_HEADER_END@
- *
- * This was copied and adapted from ld64, src/ld/LinkEdit.hpp
- */
-
 #include "RebaseV1.h"
 
-#include <Utils/Architectures.h>
-#include <Utils/Uleb128.h>
-#include <mach-o/loader.h>
+#include "Utils/Leb128.h"
 
+using namespace DyldExtractor;
 using namespace Converter;
+using namespace Linkedit;
+using namespace Encoder;
+
+RebaseV1Info::RebaseV1Info(uint8_t t, uint64_t addr)
+    : _type(t), _address(addr) {}
 
 struct rebase_tmp {
   rebase_tmp(uint8_t op, uint64_t p1, uint64_t p2 = 0)
@@ -42,8 +20,8 @@ struct rebase_tmp {
 
 template <typename P>
 std::vector<uint8_t>
-Converter::generateRebaseV1(const std::vector<RebaseV1Info> &info,
-                            const Macho::Context<false, P> &mCtx) {
+Encoder::encodeRebaseV1(const std::vector<RebaseV1Info> &info,
+                        const Macho::Context<false, P> &mCtx) {
   using PtrT = P::PtrT;
 
   // convert to temp encoding that can be more easily optimized
@@ -54,20 +32,20 @@ Converter::generateRebaseV1(const std::vector<RebaseV1Info> &info,
   uint8_t type = 0;
   uint64_t address = (uint64_t)(-1);
   for (auto it = info.begin(); it != info.end(); ++it) {
-    if (type != it->type) {
-      mid.push_back(rebase_tmp(REBASE_OPCODE_SET_TYPE_IMM, it->type));
-      type = it->type;
+    if (type != it->_type) {
+      mid.push_back(rebase_tmp(REBASE_OPCODE_SET_TYPE_IMM, it->_type));
+      type = it->_type;
     }
-    if (address != it->address) {
-      if ((it->address < curSegStart) || (it->address >= curSegEnd)) {
+    if (address != it->_address) {
+      if ((it->_address < curSegStart) || (it->_address >= curSegEnd)) {
 
         // Find segment containing address
         bool found = false;
         for (int segI = 0; segI < mCtx.segments.size(); segI++) {
           const auto &seg = mCtx.segments.at(segI);
 
-          if ((it->address < seg.command->vmaddr) ||
-              (it->address >= (seg.command->vmaddr + seg.command->vmsize))) {
+          if ((it->_address < seg.command->vmaddr) ||
+              (it->_address >= (seg.command->vmaddr + seg.command->vmsize))) {
             curSegStart = seg.command->vmaddr;
             curSegEnd = seg.command->vmaddr + seg.command->vmsize;
             curSegIndex = segI;
@@ -79,12 +57,12 @@ Converter::generateRebaseV1(const std::vector<RebaseV1Info> &info,
           throw "binding address outside range of any segment";
 
         mid.push_back(rebase_tmp(REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB,
-                                 curSegIndex, it->address - curSegStart));
+                                 curSegIndex, it->_address - curSegStart));
       } else {
         mid.push_back(
-            rebase_tmp(REBASE_OPCODE_ADD_ADDR_ULEB, it->address - address));
+            rebase_tmp(REBASE_OPCODE_ADD_ADDR_ULEB, it->_address - address));
       }
-      address = it->address;
+      address = it->_address;
     }
     mid.push_back(rebase_tmp(REBASE_OPCODE_DO_REBASE_ULEB_TIMES, 1));
     address += sizeof(PtrT);
@@ -233,9 +211,9 @@ Converter::generateRebaseV1(const std::vector<RebaseV1Info> &info,
   return encodedData;
 }
 
-template std::vector<uint8_t> Converter::generateRebaseV1<Utils::Pointer32>(
+template std::vector<uint8_t> Encoder::encodeRebaseV1<Utils::Arch::Pointer32>(
     const std::vector<RebaseV1Info> &info,
-    const Macho::Context<false, Utils::Pointer32> &mCtx);
-template std::vector<uint8_t> Converter::generateRebaseV1<Utils::Pointer64>(
+    const Macho::Context<false, Utils::Arch::Pointer32> &mCtx);
+template std::vector<uint8_t> Encoder::encodeRebaseV1<Utils::Arch::Pointer64>(
     const std::vector<RebaseV1Info> &info,
-    const Macho::Context<false, Utils::Pointer64> &mCtx);
+    const Macho::Context<false, Utils::Arch::Pointer64> &mCtx);

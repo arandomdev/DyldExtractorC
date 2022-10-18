@@ -1,13 +1,13 @@
 #ifndef __PROVIDER_DISASSEMBLER__
 #define __PROVIDER_DISASSEMBLER__
 
-#include <Logger/ActivityLogger.h>
+#include <Logger/Activity.h>
 #include <Macho/Context.h>
 #include <capstone/capstone.h>
 #include <set>
 #include <spdlog/spdlog.h>
 
-namespace Provider {
+namespace DyldExtractor::Provider {
 
 template <class A> class Disassembler {
   using P = A::P;
@@ -26,12 +26,12 @@ public:
     Instruction(cs_insn *raw);
   };
 
-  Disassembler(Macho::Context<false, P> *mCtx, ActivityLogger *activity,
+  Disassembler(Macho::Context<false, P> *mCtx, Logger::Activity *activity,
                std::shared_ptr<spdlog::logger> logger);
   ~Disassembler();
-  Disassembler(const Disassembler &o) = delete;
+  Disassembler(const Disassembler &) = delete;
   Disassembler(Disassembler &&o);
-  Disassembler &operator=(const Disassembler &o) = delete;
+  Disassembler &operator=(const Disassembler &) = delete;
   Disassembler &operator=(Disassembler &&o);
 
   void disasm();
@@ -44,7 +44,7 @@ private:
   uint32_t recoverArm(uint32_t offset);
   uint32_t recoverArm64(uint32_t offset);
 
-  ActivityLogger *activity;
+  Logger::Activity *activity;
   std::shared_ptr<spdlog::logger> logger;
 
   uint8_t *textData = nullptr;
@@ -59,6 +59,6 @@ private:
   csh handle;
 };
 
-} // namespace Provider
+} // namespace DyldExtractor::Provider
 
 #endif // __PROVIDER_DISASSEMBLER__

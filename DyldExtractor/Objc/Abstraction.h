@@ -3,7 +3,10 @@
 
 #include <stdint.h>
 
-namespace Objc {
+/// Name of segment used for extra ObjC data
+#define SEG_OBJC_EXTRA "__OBJC_EXTRA"
+
+namespace DyldExtractor::Objc {
 namespace _Defs {
 
 template <class P> struct class_t {
@@ -30,6 +33,6 @@ template <class P> struct class_t : public _Defs::class_t<P> {
       offsetof(_Defs::class_t<P>, vtable), offsetof(_Defs::class_t<P>, data)};
 };
 
-} // namespace Objc
+} // namespace DyldExtractor::Objc
 
 #endif // __OBJC_ABSTRACTION__

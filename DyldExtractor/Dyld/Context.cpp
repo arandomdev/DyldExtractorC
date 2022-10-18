@@ -4,6 +4,7 @@
 #include <iostream>
 #include <stdexcept>
 
+using namespace DyldExtractor;
 using namespace Dyld;
 
 Context::Context(fs::path sharedCachePath, const uint8_t *subCacheUUID)
@@ -20,19 +21,20 @@ Context::Context(fs::path sharedCachePath, const uint8_t *subCacheUUID)
       return;
     }
 
-    bool _usesNewerSubCacheInfo = header->cacheType == 2;
+    bool _usesNewerSubCacheInfo =
+        headerContainsMember(offsetof(dyld_cache_header, cacheSubType));
     const std::string pathBase = sharedCachePath.string();
     for (uint32_t i = 0; i < header->subCacheArrayCount; i++) {
       std::string fullPath;
       const uint8_t *subCacheUUID;
       if (_usesNewerSubCacheInfo) {
         auto subCacheInfo =
-            (dyld_subcache_entry2 *)(file + header->subCacheArrayOffset) + i;
+            (dyld_subcache_entry *)(file + header->subCacheArrayOffset) + i;
         subCacheUUID = subCacheInfo->uuid;
-        fullPath = pathBase + std::string(subCacheInfo->fileExtension);
+        fullPath = pathBase + std::string(subCacheInfo->fileSuffix);
       } else {
         auto subCacheInfo =
-            (dyld_subcache_entry *)(file + header->subCacheArrayOffset) + i;
+            (dyld_subcache_entry_v1 *)(file + header->subCacheArrayOffset) + i;
         subCacheUUID = subCacheInfo->uuid;
         fullPath = pathBase + fmt::format(".{}", i + 1);
       }
@@ -174,17 +176,17 @@ Context::createMachoCtx(const dyld_cache_image_info *imageInfo) const {
   }
 }
 
-template Macho::Context<true, Utils::Pointer32>
-Context::createMachoCtx<true, Utils::Pointer32>(
+template Macho::Context<true, Utils::Arch::Pointer32>
+Context::createMachoCtx<true, Utils::Arch::Pointer32>(
     const dyld_cache_image_info *imageInfo) const;
-template Macho::Context<true, Utils::Pointer64>
-Context::createMachoCtx<true, Utils::Pointer64>(
+template Macho::Context<true, Utils::Arch::Pointer64>
+Context::createMachoCtx<true, Utils::Arch::Pointer64>(
     const dyld_cache_image_info *imageInfo) const;
-template Macho::Context<false, Utils::Pointer32>
-Context::createMachoCtx<false, Utils::Pointer32>(
+template Macho::Context<false, Utils::Arch::Pointer32>
+Context::createMachoCtx<false, Utils::Arch::Pointer32>(
     const dyld_cache_image_info *imageInfo) const;
-template Macho::Context<false, Utils::Pointer64>
-Context::createMachoCtx<false, Utils::Pointer64>(
+template Macho::Context<false, Utils::Arch::Pointer64>
+Context::createMachoCtx<false, Utils::Arch::Pointer64>(
     const dyld_cache_image_info *imageInfo) const;
 
 const Context *Context::getSymbolsCache() const {

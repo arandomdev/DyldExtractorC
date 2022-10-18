@@ -6,14 +6,17 @@
 
 #include <Utils/Architectures.h>
 
-namespace Macho {
-namespace Loader {
+#define CPU_SUBTYPE_MASK 0xff000000
+#define CPU_SUBTYPE_ARM64E 2
+
+namespace DyldExtractor::Macho::Loader {
 
 template <class P> struct mach_header {};
-template <> struct mach_header<Utils::Pointer32> : public ::mach_header {
+template <> struct mach_header<Utils::Arch::Pointer32> : public ::mach_header {
   enum { MAGIC = MH_MAGIC, CIGAM = MH_CIGAM };
 };
-template <> struct mach_header<Utils::Pointer64> : public ::mach_header_64 {
+template <>
+struct mach_header<Utils::Arch::Pointer64> : public ::mach_header_64 {
   enum { MAGIC = MH_MAGIC_64, CIGAM = MH_CIGAM_64 };
 };
 
@@ -23,17 +26,17 @@ struct load_command : public ::load_command {
 
 template <class P> struct segment_command {};
 template <>
-struct segment_command<Utils::Pointer32> : public ::segment_command {
+struct segment_command<Utils::Arch::Pointer32> : public ::segment_command {
   constexpr static uint32_t CMDS[] = {LC_SEGMENT};
 };
 template <>
-struct segment_command<Utils::Pointer64> : public ::segment_command_64 {
+struct segment_command<Utils::Arch::Pointer64> : public ::segment_command_64 {
   constexpr static uint32_t CMDS[] = {LC_SEGMENT_64};
 };
 
 template <class P> struct section {};
-template <> struct section<Utils::Pointer32> : public ::section {};
-template <> struct section<Utils::Pointer64> : public ::section_64 {};
+template <> struct section<Utils::Arch::Pointer32> : public ::section {};
+template <> struct section<Utils::Arch::Pointer64> : public ::section_64 {};
 
 struct symtab_command : public ::symtab_command {
   constexpr static uint32_t CMDS[] = {LC_SYMTAB};
@@ -55,8 +58,8 @@ struct dyld_info_command : public ::dyld_info_command {
 };
 
 template <class P> struct nlist {};
-template <> struct nlist<Utils::Pointer32> : public ::nlist {};
-template <> struct nlist<Utils::Pointer64> : public ::nlist_64 {};
+template <> struct nlist<Utils::Arch::Pointer32> : public ::nlist {};
+template <> struct nlist<Utils::Arch::Pointer64> : public ::nlist_64 {};
 
 struct dylib_command : public ::dylib_command {
   constexpr static uint32_t CMDS[] = {LC_ID_DYLIB,          LC_LOAD_DYLIB,
@@ -64,7 +67,6 @@ struct dylib_command : public ::dylib_command {
                                       LC_LOAD_UPWARD_DYLIB, LC_LAZY_LOAD_DYLIB};
 };
 
-}; // namespace Loader
-}; // namespace Macho
+}; // namespace DyldExtractor::Macho::Loader
 
 #endif // __MACHO_LOADER__

@@ -8,14 +8,18 @@
 #include <dyld/dyld_cache_format.h>
 #include <mach-o/loader.h>
 
-namespace Macho {
+namespace DyldExtractor::Macho {
 
 namespace bio = boost::iostreams;
 namespace fs = std::filesystem;
 
 // Conditional const
-template <bool _Test, class _T> struct c_const { using T = _T; };
-template <class _T> struct c_const<true, _T> { using T = const _T; };
+template <bool _Test, class _T> struct c_const {
+  using T = _T;
+};
+template <class _T> struct c_const<true, _T> {
+  using T = const _T;
+};
 
 struct MappingInfo {
   uint64_t address;
@@ -40,18 +44,20 @@ public:
 /// A wrapper around a MachO file in the DSC.
 /// The template boolean determines if it is read only.
 template <bool ro, class P> class Context {
+public:
   using FileT = c_const<ro, uint8_t>::T;
   using LoadCommandT = c_const<ro, Loader::load_command>::T;
-
-public:
   using HeaderT = c_const<ro, Loader::mach_header<P>>::T;
+  using SegmentT = SegmentContext<ro, P>;
+  using EnumerationCallback =
+      std::function<bool(SegmentT &, typename SegmentT::SectionT *)>;
 
   // The file containing the header
   FileT *file;
   HeaderT *header;
 
   std::vector<LoadCommandT *> loadCommands;
-  std::vector<typename SegmentContext<ro, P>> segments;
+  std::vector<SegmentT> segments;
 
   /// @brief A wrapper around a MachO file.
   ///
@@ -80,6 +86,9 @@ public:
           std::vector<MappingInfo> mainMappings,
           std::vector<std::tuple<fs::path, std::vector<MappingInfo>>> subFiles);
 
+  /// @brief Reload the header and load commands
+  void reloadHeader();
+
   /// @brief Convert a vmaddr to it's file offset.
   ///
   /// If the offset could not be found, a pair with 0 and
@@ -98,81 +107,65 @@ public:
   /// @returns A file based pointer to the address
   FileT *convertAddrP(uint64_t addr) const;
 
-  /// @brief Get load commands
-  ///
-  /// If multiple is false, the first match is returned.
-  ///
-  /// @tparam _m Whether to return multiple.
-  /// @tparam _c Type of load command.
-  /// @returns A vector of load command pointers or a single load command
-  ///     pointer.
-  template <bool _m, class _c, class _ct = c_const<ro, _c>::T>
-  std::conditional<_m, std::vector<_ct *>, _ct *>::type getLoadCommand() const {
-    auto ncmds = []<std::size_t _s>(const uint32_t(&)[_s]) constexpr {
-      return _s;
-    };
-
-    if constexpr (_m) {
-      return reinterpret_cast<std::vector<_ct *> &>(
-          getLoadCommands(_c::CMDS, ncmds(_c::CMDS)));
-    } else {
-      return (_ct *)getLoadCommand(_c::CMDS, ncmds(_c::CMDS));
-    }
+  /// @brief Get the first load command with a custom filter
+  /// @tparam lc The type of load command
+  /// @param cmds The custom ID filter
+  /// @return A pointer to the load command, nullptr if not found
+  template <class lc, std::size_t _s>
+  inline c_const<ro, lc>::T *getFirstLC(const uint32_t (&cmds)[_s]) const {
+    return reinterpret_cast<c_const<ro, lc>::T *>(_getFirstLC(cmds, _s));
   }
 
-  /// @brief Get load commands
-  ///
-  /// If multiple is false, the first match is returned.
-  ///
-  /// @tparam _m Whether to return multiple.
-  /// @tparam _c Type of load command.
-  /// @param cmds Overdrive the default set of command IDs associated with the
-  ///     template command.
-  /// @returns A vector of load command pointers or a single load command
-  ///     pointer.
-  template <bool _m, class _c, class _ct = c_const<ro, _c>::T, std::size_t _s>
-  std::conditional<_m, std::vector<_ct *>, _ct *>::type
-  getLoadCommand(const uint32_t (&cmds)[_s]) const {
-    if constexpr (_m) {
-      return reinterpret_cast<std::vector<_ct *> &>(getLoadCommands(cmds, _s));
-    } else {
-      return (_ct *)getLoadCommand(cmds, _s);
-    }
+  /// @brief Get the first load command
+  /// @tparam lc The type of load command
+  /// @return A pointer to the load command, nullptr if not found
+  template <class lc> inline c_const<ro, lc>::T *getFirstLC() const {
+    return getFirstLC<lc>(lc::CMDS);
+  }
+
+  /// @brief Get all load commands with a custom filter
+  /// @tparam lc The type of load command
+  /// @param cmds The custom ID filter
+  /// @return A list of pointers to load commands
+  template <class lc, std::size_t _s>
+  inline std::vector<typename c_const<ro, lc>::T *>
+  getAllLCs(const uint32_t (&cmds)[_s]) const {
+    return reinterpret_cast<std::vector<typename c_const<ro, lc>::T *> &>(
+        _getAllLCs(cmds, _s));
+  }
+
+  /// @brief Get all load commands
+  /// @tparam lc The type of load command
+  /// @return A list of pointer to load commands
+  template <class lc>
+  inline std::vector<typename c_const<ro, lc>::T *> getAllLCs() const {
+    return getAllLCs<lc>(lc::CMDS);
   }
 
   /// @brief Search for a segment
   ///
   /// @param segName The name of the segment.
   /// @returns The segment context. nullptr if not found.
-  const SegmentContext<ro, P> *getSegment(const char *segName) const;
+  const SegmentT *getSegment(const char *segName) const;
 
   /// @brief Search for a section
   /// @param segName The name of the segment, or nullptr.
   /// @param sectName The name of the section.
   /// @returns The segment and the section
-  std::pair<const SegmentContext<ro, P> *,
-            const typename SegmentContext<ro, P>::SectionT *>
+  std::pair<const SegmentT *, const typename SegmentT::SectionT *>
   getSection(const char *segName, const char *sectName) const;
 
   /// @brief Enumerate all segments
   /// @param pred The predicate used to filter.
   /// @param callback The function to call for each section. Return false to
   ///     stop.
-  void enumerateSections(
-      std::function<bool(SegmentContext<ro, P> &,
-                         typename SegmentContext<ro, P>::SectionT *)>
-          pred,
-      std::function<bool(SegmentContext<ro, P> &,
-                         typename SegmentContext<ro, P>::SectionT *)>
-          callback);
+  void enumerateSections(EnumerationCallback pred,
+                         EnumerationCallback callback);
 
   /// @brief Enumerate all segments
   /// @param callback The function to call for each section. Return false to
   ///     stop.
-  void enumerateSections(
-      std::function<bool(SegmentContext<ro, P> &,
-                         typename SegmentContext<ro, P>::SectionT *)>
-          callback);
+  void enumerateSections(EnumerationCallback callback);
 
   /// @brief Check if the address is in the macho file
   /// @param addr
@@ -186,6 +179,7 @@ public:
   Context &operator=(Context &&other);
 
 private:
+  uint64_t headerOffset;
   // Determines if the file need to be closed during destruction.
   bool ownFiles = false;
   // Indicates if the files are open, false if ownFiles is false.
@@ -196,10 +190,10 @@ private:
   // Contains all files and mappings
   std::vector<std::tuple<FileT *, std::vector<MappingInfo>>> files;
 
-  std::vector<LoadCommandT *> getLoadCommands(const uint32_t (&targetCmds)[],
-                                              std::size_t ncmds) const;
-  LoadCommandT *getLoadCommand(const uint32_t (&targetCmds)[],
-                               std::size_t ncmds) const;
+  std::vector<LoadCommandT *> _getAllLCs(const uint32_t (&targetCmds)[],
+                                         std::size_t ncmds) const;
+  LoadCommandT *_getFirstLC(const uint32_t (&targetCmds)[],
+                            std::size_t ncmds) const;
 
   // Convenience method to open files with private access.
   static bio::mapped_file openFile(fs::path path);
@@ -207,6 +201,6 @@ private:
   openFiles(std::vector<std::tuple<fs::path, std::vector<MappingInfo>>> paths);
 };
 
-}; // namespace Macho
+}; // namespace DyldExtractor::Macho
 
 #endif // __MACHO_CONTEXT__

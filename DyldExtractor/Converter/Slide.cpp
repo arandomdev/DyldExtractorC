@@ -13,23 +13,24 @@ static inline int __builtin_ctzll(unsigned long long x) {
 }
 #endif
 
+using namespace DyldExtractor;
 using namespace Converter;
 
 #pragma region V1Processor
 class V1Processor {
-  using P = Utils::Pointer32;
+  using P = Utils::Arch::Pointer32;
   using PtrT = P::PtrT;
 
 public:
   V1Processor(
-      Macho::Context<false, P> &mCtx, ActivityLogger &activity,
-      Provider::PointerTracker<P> &pointerTracker,
+      Macho::Context<false, P> &mCtx, Logger::Activity &activity,
+      Provider::PointerTracker<P> &ptrTracker,
       const Provider::PointerTracker<P>::MappingSlideInfo &mapSlideInfo);
   void run();
 
 private:
   Macho::Context<false, P> &mCtx;
-  ActivityLogger &activity;
+  Logger::Activity &activity;
   Provider::PointerTracker<P> &ptrTracker;
 
   const Provider::PointerTracker<P>::MappingSlideInfo &mapInfo;
@@ -37,7 +38,7 @@ private:
 };
 
 V1Processor::V1Processor(
-    Macho::Context<false, P> &mCtx, ActivityLogger &activity,
+    Macho::Context<false, P> &mCtx, Logger::Activity &activity,
     Provider::PointerTracker<P> &ptrTracker,
     const Provider::PointerTracker<P>::MappingSlideInfo &mapSlideInfo)
     : mCtx(mCtx), activity(activity), ptrTracker(ptrTracker),
@@ -92,7 +93,7 @@ template <class P> class V2Processor {
   using PtrT = P::PtrT;
 
 public:
-  V2Processor(Macho::Context<false, P> &mCtx, ActivityLogger &activity,
+  V2Processor(Macho::Context<false, P> &mCtx, Logger::Activity &activity,
               std::shared_ptr<spdlog::logger> logger,
               Provider::PointerTracker<P> &ptrTracker,
               const typename Provider::PointerTracker<P>::MappingSlideInfo
@@ -103,7 +104,7 @@ private:
   void processPage(uint64_t pageAddr, uint8_t *pageData, uint64_t pageOffset);
 
   Macho::Context<false, P> &mCtx;
-  ActivityLogger &activity;
+  Logger::Activity &activity;
   std::shared_ptr<spdlog::logger> logger;
   Provider::PointerTracker<P> &ptrTracker;
 
@@ -118,7 +119,7 @@ private:
 
 template <class P>
 V2Processor<P>::V2Processor(
-    Macho::Context<false, P> &mCtx, ActivityLogger &activity,
+    Macho::Context<false, P> &mCtx, Logger::Activity &activity,
     std::shared_ptr<spdlog::logger> logger,
     Provider::PointerTracker<P> &ptrTracker,
     const typename Provider::PointerTracker<P>::MappingSlideInfo &mapSlideInfo)
@@ -206,11 +207,12 @@ void V2Processor<P>::processPage(uint64_t pageAddr, uint8_t *pageData,
 
 #pragma region V3Processor
 class V3Processor {
-  using P = Utils::Pointer64;
+  using P = Utils::Arch::Pointer64;
+  using PtrT = P::PtrT;
 
 public:
   V3Processor(
-      Macho::Context<false, P> &mCtx, ActivityLogger &activity,
+      Macho::Context<false, P> &mCtx, Logger::Activity &activity,
       Provider::PointerTracker<P> &ptrTracker,
       const Provider::PointerTracker<P>::MappingSlideInfo &mapSlideInfo);
   void run();
@@ -219,7 +221,7 @@ private:
   void processPage(uint64_t pageAddr, uint8_t *pageData, uint64_t delta);
 
   Macho::Context<false, P> &mCtx;
-  ActivityLogger &activity;
+  Logger::Activity &activity;
   Provider::PointerTracker<P> &ptrTracker;
 
   const Provider::PointerTracker<P>::MappingSlideInfo &mapInfo;
@@ -227,7 +229,7 @@ private:
 };
 
 V3Processor::V3Processor(
-    Macho::Context<false, P> &mCtx, ActivityLogger &activity,
+    Macho::Context<false, P> &mCtx, Logger::Activity &activity,
     Provider::PointerTracker<P> &ptrTracker,
     const Provider::PointerTracker<P>::MappingSlideInfo &mapSlideInfo)
     : mCtx(mCtx), activity(activity), ptrTracker(ptrTracker),
@@ -261,7 +263,8 @@ void V3Processor::run() {
       } else {
         auto pageAddr = mapInfo.address + (i * slideInfo->page_size);
         auto pageData = dataStart + (i * slideInfo->page_size);
-        processPage(pageAddr, pageData, page);
+        // Page is a byte offset into page data, delta is 8 byte stride
+        processPage(pageAddr, pageData, page / sizeof(PtrT));
       }
 
       activity.update();
@@ -274,7 +277,7 @@ void V3Processor::processPage(uint64_t pageAddr, uint8_t *pageData,
   auto pAddr = pageAddr;
   auto pLoc = (dyld_cache_slide_pointer3 *)pageData;
   do {
-    pAddr += delta;
+    pAddr += delta * sizeof(PtrT);
     pLoc += delta;
 
     delta = pLoc->plain.offsetToNextPointer;
@@ -300,11 +303,11 @@ void V3Processor::processPage(uint64_t pageAddr, uint8_t *pageData,
 
 #pragma region V4Processor
 class V4Processor {
-  using P = Utils::Pointer32;
+  using P = Utils::Arch::Pointer32;
 
 public:
   V4Processor(
-      Macho::Context<false, P> &mCtx, ActivityLogger &activity,
+      Macho::Context<false, P> &mCtx, Logger::Activity &activity,
       std::shared_ptr<spdlog::logger> logger,
       Provider::PointerTracker<P> &ptrTracker,
       const Provider::PointerTracker<P>::MappingSlideInfo &mapSlideInfo);
@@ -314,7 +317,7 @@ private:
   void processPage(uint32_t pageAddr, uint8_t *pageData, uint32_t pageOffset);
 
   Macho::Context<false, P> &mCtx;
-  ActivityLogger &activity;
+  Logger::Activity &activity;
   std::shared_ptr<spdlog::logger> logger;
   Provider::PointerTracker<P> &ptrTracker;
 
@@ -328,7 +331,7 @@ private:
 };
 
 V4Processor::V4Processor(
-    Macho::Context<false, P> &mCtx, ActivityLogger &activity,
+    Macho::Context<false, P> &mCtx, Logger::Activity &activity,
     std::shared_ptr<spdlog::logger> logger,
     Provider::PointerTracker<P> &ptrTracker,
     const Provider::PointerTracker<P>::MappingSlideInfo &mapSlideInfo)
@@ -427,11 +430,11 @@ void Converter::processSlideInfo(Utils::ExtractionContext<A> &eCtx) {
   auto &mCtx = *eCtx.mCtx;
   auto &activity = *eCtx.activity;
   auto logger = eCtx.logger;
-  auto &ptrTracker = eCtx.pointerTracker;
+  auto &ptrTracker = eCtx.ptrTracker;
 
   activity.update("Slide Info", "Processing slide info");
 
-  const auto &mappings = eCtx.pointerTracker.getSlideMappings();
+  const auto &mappings = eCtx.ptrTracker.getSlideMappings();
   if (!mappings.size()) {
     SPDLOG_LOGGER_WARN(logger, "No slide mappings found.");
   }
@@ -439,7 +442,7 @@ void Converter::processSlideInfo(Utils::ExtractionContext<A> &eCtx) {
   for (const auto &map : mappings) {
     switch (map->slideInfoVersion) {
     case 1: {
-      if constexpr (std::is_same<P, Utils::Pointer64>::value) {
+      if constexpr (std::is_same<P, Utils::Arch::Pointer64>::value) {
         SPDLOG_LOGGER_ERROR(logger, "Unable to handle 64bit V1 slide info.");
       } else {
         V1Processor(mCtx, activity, ptrTracker, *map).run();
@@ -451,7 +454,7 @@ void Converter::processSlideInfo(Utils::ExtractionContext<A> &eCtx) {
       break;
     }
     case 3: {
-      if constexpr (std::is_same<P, Utils::Pointer32>::value) {
+      if constexpr (std::is_same<P, Utils::Arch::Pointer32>::value) {
         SPDLOG_LOGGER_ERROR(logger, "Unable to handle 32bit V3 slide info.");
       } else {
         V3Processor(mCtx, activity, ptrTracker, *map).run();
@@ -459,7 +462,7 @@ void Converter::processSlideInfo(Utils::ExtractionContext<A> &eCtx) {
       break;
     }
     case 4: {
-      if constexpr (std::is_same<P, Utils::Pointer64>::value) {
+      if constexpr (std::is_same<P, Utils::Arch::Pointer64>::value) {
         SPDLOG_LOGGER_ERROR(logger, "Unable to handle 64bit V4 slide info.");
       } else {
         V4Processor(mCtx, activity, logger, ptrTracker, *map).run();

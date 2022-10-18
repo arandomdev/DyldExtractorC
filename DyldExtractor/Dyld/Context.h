@@ -7,7 +7,7 @@
 #include <Macho/Context.h>
 #include <dyld/dyld_cache_format.h>
 
-namespace Dyld {
+namespace DyldExtractor::Dyld {
 
 namespace bio = boost::iostreams;
 namespace fs = std::filesystem;
@@ -73,6 +73,6 @@ private:
   void preflightCache(const uint8_t *subCacheUUID = nullptr);
 };
 
-}; // namespace Dyld
+}; // namespace DyldExtractor::Dyld
 
 #endif // __DYLD_CONTEXT__

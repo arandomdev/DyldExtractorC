@@ -4,7 +4,7 @@
 #include <Provider/PointerTracker.h>
 #include <Utils/ExtractionContext.h>
 
-namespace Converter {
+namespace DyldExtractor::Converter::Stubs {
 
 template <class A> class Arm64Utils {
   using P = A::P;
@@ -59,10 +59,17 @@ public:
   ///     addr or an address to a stub if the format is not known.
   PtrT resolveStubChain(const PtrT addr);
 
+  /// @brief Resolve a stub chain with extended chain information
+  /// @param addr The address of the first stub
+  /// @return A vector of stubs in the chain, the first in the pair is the
+  ///   target of the stub and the second is the format of the stub.
+  std::vector<std::pair<PtrT, StubFormat>>
+  resolveStubChainExtended(const PtrT addr);
+
   /// @brief Get the offset data of a stub helper.
   /// @param addr The address of the stub helper
   /// @returns The offset data or nullopt if it's not a regular stub helper.
-  std::optional<PtrT> getStubHelperData(const PtrT addr) const;
+  std::optional<uint32_t> getStubHelperData(const PtrT addr) const;
 
   /// @brief Get the address of the symbol pointer for a normal stub.
   /// @param addr The address of the stub
@@ -100,10 +107,10 @@ public:
   };
 
 private:
-  friend class Utils::Accelerator<P>;
+  friend class Provider::Accelerator<P>;
 
   const Dyld::Context &dCtx;
-  Utils::Accelerator<P> &accelerator;
+  Provider::Accelerator<P> &accelerator;
   const Provider::PointerTracker<P> &ptrTracker;
 
   using ResolverT = typename std::function<std::optional<PtrT>(PtrT)>;
@@ -119,6 +126,6 @@ private:
   static PtrT getLdrOffset(const uint32_t ldrI);
 };
 
-}; // namespace Converter
+}; // namespace DyldExtractor::Converter::Stubs
 
 #endif // __CONVERTER_STUBS_ARM64UTILS__

@@ -2,6 +2,7 @@
 
 #include <Utils/ExtractionContext.h>
 
+using namespace DyldExtractor;
 using namespace Provider;
 
 template <class P>
@@ -85,7 +86,8 @@ void PointerTracker<P>::addAuth(const PtrT addr, AuthData data) {
 }
 
 template <class P>
-void PointerTracker<P>::addBind(const PtrT addr, const SymbolicInfo *data) {
+void PointerTracker<P>::addBind(const PtrT addr,
+                                std::shared_ptr<SymbolicInfo> data) {
   bindData[addr] = data;
 }
 
@@ -96,9 +98,14 @@ PointerTracker<P>::getMappings() const {
 }
 
 template <class P>
-const std::vector<const typename PointerTracker<P>::MappingSlideInfo *> &
+std::vector<const typename PointerTracker<P>::MappingSlideInfo *>
 PointerTracker<P>::getSlideMappings() const {
-  return slideMappings;
+  std::vector<const MappingSlideInfo *> results;
+  results.reserve(mappings.size());
+  for (const auto &mapI : slideMappings) {
+    results.emplace_back(&mappings[mapI]);
+  }
+  return results;
 }
 
 template <class P>
@@ -108,18 +115,71 @@ PointerTracker<P>::getPointers() const {
   return pointers;
 }
 
+template <class P>
+const std::map<typename PointerTracker<P>::PtrT,
+               typename PointerTracker<P>::AuthData> &
+PointerTracker<P>::getAuths() const {
+  return authData;
+}
+
+template <class P>
+const std::map<typename PointerTracker<P>::PtrT, std::shared_ptr<SymbolicInfo>>
+    &PointerTracker<P>::getBinds() const {
+  return bindData;
+}
+
+template <class P> uint32_t PointerTracker<P>::getPageSize() const {
+  const auto slideMaps = getSlideMappings();
+  if (!slideMaps.size()) {
+    SPDLOG_LOGGER_ERROR(logger, "No slide info to infer pagesize!");
+    return 0x1000;
+  }
+
+  const auto map = *slideMaps.begin();
+  switch (map->slideInfoVersion) {
+  case 1:
+    // Assume 0x1000
+    return 0x1000;
+  case 2:
+  case 3:
+  case 4: {
+    // page size in second uint32_t field
+    auto pageSize = reinterpret_cast<const uint32_t *>(map->slideInfo)[1];
+    return pageSize;
+  }
+  default:
+    SPDLOG_LOGGER_WARN(logger, "Unknown slide info version");
+    return 0x1000;
+  }
+}
+
 template <class P> void PointerTracker<P>::fillMappings() {
   if (dCtx->header->slideInfoOffsetUnused) {
     // Assume legacy case with no sub caches, and only one slide info
-    auto slideInfo = dCtx->file + dCtx->header->slideInfoOffsetUnused;
-    uint32_t slideVer = *(uint32_t *)slideInfo;
+    auto maps =
+        (dyld_cache_mapping_info *)(dCtx->file + dCtx->header->mappingOffset);
+
+    // First mapping doesn't have slide info
+    mappings.emplace_back(dCtx->file + maps->fileOffset, maps->address,
+                          maps->size, 0, nullptr);
 
     // slide info corresponds to the second mapping
-    auto mapping =
-        (dyld_cache_mapping_info *)(dCtx->file + dCtx->header->mappingOffset +
-                                    sizeof(dyld_cache_mapping_info));
-    mappings.emplace_back(dCtx->file + mapping->fileOffset, mapping->address,
-                          mapping->size, slideVer, slideInfo);
+    auto map2 = maps + 1;
+    auto slideInfo = dCtx->file + dCtx->header->slideInfoOffsetUnused;
+    uint32_t slideVer = *(uint32_t *)slideInfo;
+    mappings.emplace_back(dCtx->file + map2->fileOffset, map2->address,
+                          map2->size, slideVer, slideInfo);
+    slideMappings.push_back(1);
+    if (slideVer == 3) {
+      authMappings.push_back(1);
+    }
+
+    // Add other mappings
+    for (uint32_t i = 2; i < dCtx->header->mappingCount; i++) {
+      auto map = maps + i;
+      mappings.emplace_back(dCtx->file + map->address, map->address, map->size,
+                            0, nullptr);
+    }
     return;
   }
 
@@ -156,15 +216,16 @@ template <class P> void PointerTracker<P>::fillMappings() {
   }
 
   // fill other mappings as mappings should be constant now
-  for (const auto &map : mappings) {
+  for (int i = 0; i < mappings.size(); i++) {
+    const auto &map = mappings.at(i);
     if (map.slideInfo != nullptr) {
-      slideMappings.push_back(&map);
+      slideMappings.push_back(i);
     }
     if (map.slideInfoVersion == 3) {
-      authMappings.push_back(&map);
+      authMappings.push_back(i);
     }
   }
 }
 
-template class PointerTracker<Utils::Pointer32>;
-template class PointerTracker<Utils::Pointer64>;
+template class PointerTracker<Utils::Arch::Pointer32>;
+template class PointerTracker<Utils::Arch::Pointer64>;

@@ -10,14 +10,14 @@
 #include <spdlog/spdlog.h>
 #include <thread>
 
-#include <Converter/LinkeditOptimizer.h>
-#include <Converter/Objc.h>
+#include <Converter/Linkedit/Linkedit.h>
+#include <Converter/Objc/Objc.h>
 #include <Converter/OffsetOptimizer.h>
-#include <Converter/Rebase.h>
 #include <Converter/Slide.h>
-#include <Converter/Stubs.h>
+#include <Converter/Stubs/Stubs.h>
 #include <Dyld/Context.h>
-#include <Utils/Accelerator.h>
+#include <Provider/Accelerator.h>
+#include <Provider/Validator.h>
 #include <Utils/ExtractionContext.h>
 
 #include "config.h"
@@ -25,14 +25,19 @@
 namespace bi = boost::interprocess;
 namespace bp = boost::process;
 namespace fs = std::filesystem;
+using namespace DyldExtractor;
 
 #pragma region Arguments
 struct ProgramArguments {
+  std::vector<std::string> rawArguments;
+
   fs::path programPath;
   fs::path cachePath;
   std::optional<fs::path> outputDir;
   bool disableOutput;
   bool verbose;
+  bool quiet;
+  bool onlyValidate;
   unsigned int jobs;
   bool imbedVersion;
 
@@ -40,7 +45,7 @@ struct ProgramArguments {
     uint32_t raw;
     struct {
       uint32_t processSlideInfo : 1, optimizeLinkedit : 1, fixStubs : 1,
-          fixObjc : 1, unused : 28;
+          fixObjc : 1, generateMetadata : 1, unused : 27;
     };
   } modulesDisabled;
 
@@ -79,6 +84,16 @@ ProgramArguments parseArgs(int argc, char const *argv[]) {
       .default_value(false)
       .implicit_value(true);
 
+  program.add_argument("-q", "--quiet")
+      .help("Omits the processed images messages unless there are logs.")
+      .default_value(false)
+      .implicit_value(true);
+
+  program.add_argument("--only-validate")
+      .help("Only validate images.")
+      .default_value(false)
+      .implicit_value(true);
+
   program.add_argument("-j", "--jobs")
       .help("The number of parallel clients to run.")
       .scan<'d', unsigned int>()
@@ -87,7 +102,7 @@ ProgramArguments parseArgs(int argc, char const *argv[]) {
   program.add_argument("-s", "--skip-modules")
       .help("Skip certain modules. Most modules depend on each other, so use "
             "with caution. Useful for development. 1=processSlideInfo, "
-            "2=optimizeLinkedit, 4=fixStubs, 8=fixObjc")
+            "2=optimizeLinkedit, 4=fixStubs, 8=fixObjc, 16=generateMetadata")
       .scan<'d', int>()
       .default_value(0);
 
@@ -102,6 +117,8 @@ ProgramArguments parseArgs(int argc, char const *argv[]) {
       .implicit_value(true);
 
   ProgramArguments args;
+  std::copy(argv + 1, argv + argc, std::back_inserter(args.rawArguments));
+
   try {
     program.parse_args(argc, argv);
 
@@ -110,6 +127,8 @@ ProgramArguments parseArgs(int argc, char const *argv[]) {
     args.outputDir = program.present<std::string>("--output-dir");
     args.disableOutput = program.get<bool>("--disable-output");
     args.verbose = program.get<bool>("--verbose");
+    args.quiet = program.get<bool>("--quiet");
+    args.onlyValidate = program.get<bool>("--only-validate");
     args.jobs = program.get<unsigned int>("--jobs");
     args.modulesDisabled.raw = program.get<int>("--skip-modules");
     args.imbedVersion = program.get<bool>("--imbed-version");
@@ -248,7 +267,7 @@ struct ClientProcess {
 };
 
 /// Default server that uses multiple processes
-template <class A> void server(ProgramArguments &args, Dyld::Context &dCtx) {
+template <class A> int server(ProgramArguments &args, Dyld::Context &dCtx) {
   signal(SIGINT, sigintHandler);
 
   // Create message queue
@@ -267,7 +286,7 @@ template <class A> void server(ProgramArguments &args, Dyld::Context &dCtx) {
       SHARED_MESSAGE_QUEUE_NAME)(sharedMemory.get_segment_manager());
 
   // Server setup
-  ActivityLogger activity("dyldex_all_multiprocess", std::cout, true);
+  Logger::Activity activity("dyldex_all_multiprocess", std::cout, true);
   activity.logger->set_pattern("[%T:%e %-8l %s:%#] %v");
   if (args.verbose) {
     activity.logger->set_level(spdlog::level::trace);
@@ -282,24 +301,7 @@ template <class A> void server(ProgramArguments &args, Dyld::Context &dCtx) {
   const int totalImages = (int)dCtx.images.size();
 
   // Launch clients
-  std::vector<std::string> clientArgsBase{args.cachePath.string()};
-  if (args.outputDir) {
-    clientArgsBase.emplace_back("--output-dir");
-    clientArgsBase.emplace_back(args.outputDir->string());
-  }
-  if (args.disableOutput) {
-    clientArgsBase.emplace_back("--disable-output");
-  }
-  if (args.verbose) {
-    clientArgsBase.emplace_back("--verbose");
-  }
-  if (args.modulesDisabled.raw) {
-    clientArgsBase.emplace_back("--skip-modules");
-    clientArgsBase.push_back(std::to_string(args.modulesDisabled.raw));
-  }
-  if (args.imbedVersion) {
-    clientArgsBase.emplace_back("--imbed-version");
-  }
+  std::vector<std::string> clientArgsBase = args.rawArguments;
 
   std::string clientArch;
   if constexpr (std::is_same_v<A, Utils::Arch::x86_64>)
@@ -336,6 +338,7 @@ template <class A> void server(ProgramArguments &args, Dyld::Context &dCtx) {
   }
 
   // Server loop
+  bool clientFailure = false;
   while (true) {
     // Check signal
     if (interrupted) {
@@ -359,6 +362,7 @@ template <class A> void server(ProgramArguments &args, Dyld::Context &dCtx) {
                              clientID, exitCode, clients[clientID].nextImage)
               << std::endl;
 
+          clientFailure = true;
           stop = true;
         }
         break;
@@ -376,9 +380,12 @@ template <class A> void server(ProgramArguments &args, Dyld::Context &dCtx) {
         imagesProcessed++;
         activity.update(std::nullopt,
                         fmt::format("[{:4}/{}]", imagesProcessed, totalImages));
-        loggerStream << fmt::format("Processed {}\n{}", message->currentImage,
-                                    message->logs)
-                     << std::endl;
+
+        if (!args.quiet || message->logs.length()) {
+          loggerStream << fmt::format("Processed {}\n{}", message->currentImage,
+                                      message->logs)
+                       << std::endl;
+        }
 
         // Update summary if needed
         if (message->logs.length()) {
@@ -415,9 +422,18 @@ template <class A> void server(ProgramArguments &args, Dyld::Context &dCtx) {
   // Write summary
   activity.update(std::nullopt, "Done");
   activity.stopActivity();
-  loggerStream << fmt::format("\n==== Summary ====\n{}=================",
-                              summaryLog.str())
-               << std::endl;
+
+  if (auto logs = summaryLog.str(); logs.length()) {
+    loggerStream << fmt::format("\n==== Summary ====\n{}=================",
+                                logs)
+                 << std::endl;
+  }
+
+  if (clientFailure) {
+    return 1;
+  } else {
+    return 0;
+  }
 }
 #pragma endregion Server
 
@@ -429,7 +445,90 @@ getImageName(Dyld::Context &dCtx, const dyld_cache_image_info *image) {
   return std::make_pair(imagePath, imageName);
 }
 
+template <class A>
+std::ostringstream
+processImage(ProgramArguments &args, Dyld::Context &dCtx,
+             Provider::Accelerator<typename A::P> &accelerator,
+             const dyld_cache_image_info *imageInfo, std::string imagePath,
+             std::string imageName) {
+  using P = A::P;
+
+  // Setup context
+  std::ostringstream loggerStream;
+  Logger::Activity activity("dyldex_all_multiprocess_" + imageName,
+                            loggerStream, false);
+  activity.logger->set_pattern("[%-8l %s:%#] %v");
+  if (args.verbose) {
+    activity.logger->set_level(spdlog::level::trace);
+  } else {
+    activity.logger->set_level(spdlog::level::info);
+  }
+
+  auto mCtx = dCtx.createMachoCtx<false, P>(imageInfo);
+
+  // Validate
+  try {
+    Provider::Validator<P>(mCtx).validate();
+  } catch (const std::exception &e) {
+    SPDLOG_LOGGER_ERROR(activity.logger, "Validation Error: {}", e.what());
+    return loggerStream;
+  }
+
+  if (args.onlyValidate) {
+    return loggerStream;
+  }
+
+  Utils::ExtractionContext<A> eCtx(dCtx, mCtx, activity, accelerator);
+
+  // Process image
+  if (!args.modulesDisabled.processSlideInfo) {
+    Converter::processSlideInfo(eCtx);
+  }
+  if (!args.modulesDisabled.optimizeLinkedit) {
+    Converter::optimizeLinkedit(eCtx);
+  }
+  if (!args.modulesDisabled.fixStubs) {
+    Converter::fixStubs(eCtx);
+  }
+  if (!args.modulesDisabled.fixObjc) {
+    Converter::fixObjc(eCtx);
+  }
+  if (!args.modulesDisabled.generateMetadata) {
+    Converter::generateMetadata(eCtx);
+  }
+  if (args.imbedVersion) {
+    if constexpr (!std::is_same_v<P, Utils::Arch::Pointer64>) {
+      SPDLOG_LOGGER_ERROR(
+          activity.logger,
+          "Unable to imbed version info in a non 64 bit image.");
+    } else {
+      mCtx.header->reserved = DYLDEXTRACTORC_VERSION_DATA;
+    }
+  }
+
+  if (!args.disableOutput) {
+    auto writeProcedures = Converter::optimizeOffsets(eCtx);
+
+    auto outputPath = *args.outputDir / imagePath.substr(1); // remove leading /
+    fs::create_directories(outputPath.parent_path());
+    std::ofstream outFile(outputPath, std::ios_base::binary);
+    if (outFile.good()) {
+      for (auto procedure : writeProcedures) {
+        outFile.seekp(procedure.writeOffset);
+        outFile.write((const char *)procedure.source, procedure.size);
+      }
+      outFile.close();
+    } else {
+      SPDLOG_LOGGER_ERROR(activity.logger, "Unable to open output file.");
+    }
+  }
+
+  return loggerStream;
+}
+
 template <class A> int client(ProgramArguments &args) {
+  using P = A::P;
+
   // Get shared message queue
   bi::managed_shared_memory sharedMemory(bi::open_only, SHARED_MEMORY_NAME);
   auto messageQueue =
@@ -437,7 +536,7 @@ template <class A> int client(ProgramArguments &args) {
 
   // Setup processing
   Dyld::Context dCtx(args.cachePath);
-  Utils::Accelerator<typename A::P> accelerator;
+  Provider::Accelerator<P> accelerator;
 
   // tell server about first image
   if (auto i = args.clientSpec.start; i < args.clientSpec.end) {
@@ -451,62 +550,8 @@ template <class A> int client(ProgramArguments &args) {
        i += args.clientSpec.skip) {
     auto imageInfo = dCtx.images[i];
     auto [imagePath, imageName] = getImageName(dCtx, imageInfo);
-
-    // Setup context
-    std::ostringstream loggerStream;
-    ActivityLogger activity("dyldex_all_multiprocess_" + imageName,
-                            loggerStream, false);
-    activity.logger->set_pattern("[%-8l %s:%#] %v");
-    if (args.verbose) {
-      activity.logger->set_level(spdlog::level::trace);
-    } else {
-      activity.logger->set_level(spdlog::level::info);
-    }
-
-    auto mCtx = dCtx.createMachoCtx<false, typename A::P>(imageInfo);
-    Utils::ExtractionContext<A> eCtx(dCtx, mCtx, activity, accelerator);
-
-    // Process image
-    if (!args.modulesDisabled.processSlideInfo) {
-      Converter::processSlideInfo(eCtx);
-    }
-    if (!args.modulesDisabled.optimizeLinkedit) {
-      Converter::optimizeLinkedit(eCtx);
-    }
-    if (!args.modulesDisabled.fixStubs) {
-      Converter::fixStubs(eCtx);
-    }
-    if (!args.modulesDisabled.fixObjc) {
-      Converter::fixObjc(eCtx);
-    }
-    Converter::generateRebase(eCtx);
-    if (args.imbedVersion) {
-      if constexpr (!std::is_same_v<typename A::P, Utils::Pointer64>) {
-        SPDLOG_LOGGER_ERROR(
-            activity.logger,
-            "Unable to imbed version info in a non 64 bit image.");
-      } else {
-        mCtx.header->reserved = DYLDEXTRACTORC_VERSION_DATA;
-      }
-    }
-
-    if (!args.disableOutput) {
-      auto writeProcedures = Converter::optimizeOffsets(eCtx);
-
-      auto outputPath =
-          *args.outputDir / imagePath.substr(1); // remove leading /
-      fs::create_directories(outputPath.parent_path());
-      std::ofstream outFile(outputPath, std::ios_base::binary);
-      if (outFile.good()) {
-        for (auto procedure : writeProcedures) {
-          outFile.seekp(procedure.writeOffset);
-          outFile.write((const char *)procedure.source, procedure.size);
-        }
-        outFile.close();
-      } else {
-        SPDLOG_LOGGER_ERROR(activity.logger, "Unable to open output file.");
-      }
-    }
+    auto loggerStream = processImage<A>(args, dCtx, accelerator, imageInfo,
+                                        imagePath, imageName);
 
     // Peek ahead
     std::string nextImageName = "";
@@ -537,20 +582,20 @@ int main(int argc, char const *argv[]) {
       case ProgramArguments::ClientSpecification::Arch::arm64_32:
         return client<Utils::Arch::arm64_32>(args);
       default:
-        std::cerr << fmt::format("Unknown architecture type {}.",
+        std::cerr << fmt::format("\nUnknown architecture type {}.",
                                  static_cast<int>(args.clientSpec.arch))
                   << std::endl;
         return 1;
       }
     } catch (const std::exception &e) {
-      std::cerr << fmt::format("Client {}: critical error: {}",
+      std::cerr << fmt::format("\nClient {}: critical error: {}",
                                args.clientSpec.clientID, e.what())
                 << std::endl;
       return 1;
     }
   } else {
     // Check arguments
-    if (!args.disableOutput && !args.outputDir) {
+    if (!args.disableOutput && !args.outputDir && !args.onlyValidate) {
       std::cerr << "Output directory is required for extraction" << std::endl;
       return 1;
     }
@@ -559,29 +604,32 @@ int main(int argc, char const *argv[]) {
       Dyld::Context dCtx(args.cachePath);
 
       // use dyld's magic to select arch
+      int retCode;
       if (strcmp(dCtx.header->magic, "dyld_v1  x86_64") == 0)
-        server<Utils::Arch::x86_64>(args, dCtx);
+        retCode = server<Utils::Arch::x86_64>(args, dCtx);
       else if (strcmp(dCtx.header->magic, "dyld_v1 x86_64h") == 0)
-        server<Utils::Arch::x86_64>(args, dCtx);
+        retCode = server<Utils::Arch::x86_64>(args, dCtx);
       else if (strcmp(dCtx.header->magic, "dyld_v1   armv7") == 0)
-        server<Utils::Arch::arm>(args, dCtx);
+        retCode = server<Utils::Arch::arm>(args, dCtx);
       else if (strncmp(dCtx.header->magic, "dyld_v1  armv7", 14) == 0)
-        server<Utils::Arch::arm>(args, dCtx);
+        retCode = server<Utils::Arch::arm>(args, dCtx);
       else if (strcmp(dCtx.header->magic, "dyld_v1   arm64") == 0)
-        server<Utils::Arch::arm64>(args, dCtx);
+        retCode = server<Utils::Arch::arm64>(args, dCtx);
       else if (strcmp(dCtx.header->magic, "dyld_v1  arm64e") == 0)
-        server<Utils::Arch::arm64>(args, dCtx);
+        retCode = server<Utils::Arch::arm64>(args, dCtx);
       else if (strcmp(dCtx.header->magic, "dyld_v1arm64_32") == 0)
-        server<Utils::Arch::arm64_32>(args, dCtx);
+        retCode = server<Utils::Arch::arm64_32>(args, dCtx);
       else if (strcmp(dCtx.header->magic, "dyld_v1    i386") == 0 ||
                strcmp(dCtx.header->magic, "dyld_v1   armv5") == 0 ||
                strcmp(dCtx.header->magic, "dyld_v1   armv6") == 0) {
         std::cerr << "Unsupported architecture type." << std::endl;
-        return 1;
+        retCode = 1;
       } else {
         std::cerr << "Unrecognized dyld shared cache magic." << std::endl;
-        return 1;
+        retCode = 1;
       }
+
+      return retCode;
     } catch (const std::exception &e) {
       std::cerr << fmt::format("Critical error: {}", e.what()) << std::endl;
       return 1;

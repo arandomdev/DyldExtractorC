@@ -2,6 +2,7 @@
 
 #include <exception>
 
+using namespace DyldExtractor;
 using namespace Macho;
 
 MappingInfo::MappingInfo(const dyld_cache_mapping_info *info)
@@ -18,17 +19,18 @@ SegmentContext<ro, P>::SegmentContext(SegmentCommandT *segment)
   }
 }
 
-template class SegmentContext<true, Utils::Pointer32>;
-template class SegmentContext<true, Utils::Pointer64>;
-template class SegmentContext<false, Utils::Pointer32>;
-template class SegmentContext<false, Utils::Pointer64>;
+template class SegmentContext<true, Utils::Arch::Pointer32>;
+template class SegmentContext<true, Utils::Arch::Pointer64>;
+template class SegmentContext<false, Utils::Arch::Pointer32>;
+template class SegmentContext<false, Utils::Arch::Pointer64>;
 
 template <bool ro, class P>
 Context<ro, P>::Context(
     uint64_t fileOffset, bio::mapped_file mainFile,
     std::vector<MappingInfo> mainMappings,
     std::vector<std::tuple<bio::mapped_file, std::vector<MappingInfo>>>
-        subFiles) {
+        subFiles)
+    : headerOffset(fileOffset) {
   // Store files
   if constexpr (ro) {
     file = (FileT *)mainFile.const_data();
@@ -53,27 +55,7 @@ Context<ro, P>::Context(
     filesOpen = true;
   }
 
-  // get data
-  header = (HeaderT *)(file + fileOffset);
-
-  if (header->magic != HeaderT::MAGIC && header->magic != HeaderT::CIGAM) {
-    throw std::invalid_argument("Mach-o header has an invalid magic.");
-  } else if (header->magic == HeaderT::CIGAM) {
-    throw std::invalid_argument(
-        "Host system endianness incompatible with mach-o file.");
-  }
-
-  loadCommands.reserve(header->ncmds);
-  FileT *cmdStart = (FileT *)header + sizeof(HeaderT);
-  for (uint32_t cmdOff = 0; cmdOff < header->sizeofcmds;) {
-    auto cmd = (LoadCommandT *)(cmdStart + cmdOff);
-    loadCommands.emplace_back(cmd);
-    cmdOff += cmd->cmdsize;
-  }
-
-  for (auto const seg : getLoadCommand<true, Loader::segment_command<P>>()) {
-    segments.emplace_back(seg);
-  }
+  reloadHeader();
 }
 
 template <bool ro, class P>
@@ -121,6 +103,32 @@ Context<ro, P> &Context<ro, P>::operator=(Context<ro, P> &&other) {
   other.ownFiles = false;
   other.filesOpen = false;
   return *this;
+}
+
+template <bool ro, class P> void Context<ro, P>::reloadHeader() {
+  loadCommands.clear();
+  segments.clear();
+
+  header = (HeaderT *)(file + headerOffset);
+
+  if (header->magic != HeaderT::MAGIC && header->magic != HeaderT::CIGAM) {
+    throw std::invalid_argument("Mach-o header has an invalid magic.");
+  } else if (header->magic == HeaderT::CIGAM) {
+    throw std::invalid_argument(
+        "Host system endianness incompatible with mach-o file.");
+  }
+
+  loadCommands.reserve(header->ncmds);
+  FileT *cmdStart = (FileT *)header + sizeof(HeaderT);
+  for (uint32_t cmdOff = 0; cmdOff < header->sizeofcmds;) {
+    auto cmd = (LoadCommandT *)(cmdStart + cmdOff);
+    loadCommands.emplace_back(cmd);
+    cmdOff += cmd->cmdsize;
+  }
+
+  for (auto const seg : getAllLCs<Loader::segment_command<P>>()) {
+    segments.emplace_back(seg);
+  }
 }
 
 template <bool ro, class P>
@@ -210,9 +218,9 @@ bool Context<ro, P>::containsAddr(const uint64_t addr) const {
 }
 
 template <bool ro, class P>
-std::vector<typename c_const<ro, Loader::load_command>::T *>
-Context<ro, P>::getLoadCommands(const uint32_t (&targetCmds)[],
-                                std::size_t ncmds) const {
+std::vector<typename Context<ro, P>::LoadCommandT *>
+Context<ro, P>::_getAllLCs(const uint32_t (&targetCmds)[],
+                           std::size_t ncmds) const {
   auto matchLoadCommands = [&targetCmds, ncmds](uint32_t cmd) {
     // magic value for load_command, match all.
     if (ncmds == 2 && targetCmds[0] == 0x00 && targetCmds[1] == 0x00) {
@@ -227,7 +235,7 @@ Context<ro, P>::getLoadCommands(const uint32_t (&targetCmds)[],
     return false;
   };
 
-  std::vector<typename c_const<ro, Loader::load_command>::T *> lcs;
+  std::vector<LoadCommandT *> lcs;
   for (auto lc : loadCommands) {
     if (matchLoadCommands(lc->cmd)) {
       lcs.push_back(lc);
@@ -238,9 +246,9 @@ Context<ro, P>::getLoadCommands(const uint32_t (&targetCmds)[],
 }
 
 template <bool ro, class P>
-typename c_const<ro, Loader::load_command>::T *
-Context<ro, P>::getLoadCommand(const uint32_t (&targetCmds)[],
-                               std::size_t ncmds) const {
+Context<ro, P>::LoadCommandT *
+Context<ro, P>::_getFirstLC(const uint32_t (&targetCmds)[],
+                            std::size_t ncmds) const {
   auto matchLoadCommands = [&targetCmds, ncmds](uint32_t cmd) {
     // magic value for load_command, match all.
     if (ncmds == 2 && targetCmds[0] == 0x00 && targetCmds[1] == 0x00) {
@@ -265,14 +273,8 @@ Context<ro, P>::getLoadCommand(const uint32_t (&targetCmds)[],
 }
 
 template <bool ro, class P>
-void Context<ro, P>::enumerateSections(
-    std::function<bool(SegmentContext<ro, P> &,
-                       typename SegmentContext<ro, P>::SectionT *)>
-        pred,
-    std::function<bool(SegmentContext<ro, P> &,
-                       typename SegmentContext<ro, P>::SectionT *)>
-        callback) {
-
+void Context<ro, P>::enumerateSections(EnumerationCallback pred,
+                                       EnumerationCallback callback) {
   for (auto &seg : segments) {
     for (auto sect : seg.sections) {
       if (pred(seg, sect)) {
@@ -285,10 +287,7 @@ void Context<ro, P>::enumerateSections(
 }
 
 template <bool ro, class P>
-void Context<ro, P>::enumerateSections(
-    std::function<bool(SegmentContext<ro, P> &,
-                       typename SegmentContext<ro, P>::SectionT *)>
-        callback) {
+void Context<ro, P>::enumerateSections(EnumerationCallback callback) {
   enumerateSections([](...) { return true; }, callback);
 }
 
@@ -312,7 +311,7 @@ Context<ro, P>::openFiles(
   return files;
 }
 
-template class Context<true, Utils::Pointer32>;
-template class Context<true, Utils::Pointer64>;
-template class Context<false, Utils::Pointer32>;
-template class Context<false, Utils::Pointer64>;
+template class Context<true, Utils::Arch::Pointer32>;
+template class Context<true, Utils::Arch::Pointer64>;
+template class Context<false, Utils::Arch::Pointer32>;
+template class Context<false, Utils::Arch::Pointer64>;

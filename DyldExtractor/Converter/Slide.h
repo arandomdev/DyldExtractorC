@@ -4,10 +4,10 @@
 #include <Utils/ExtractionContext.h>
 #include <map>
 
-namespace Converter {
+namespace DyldExtractor::Converter {
 
 template <class A> void processSlideInfo(Utils::ExtractionContext<A> &eCtx);
 
-} // namespace Converter
+} // namespace DyldExtractor::Converter
 
 #endif // __CONVERTER_SLIDE__
