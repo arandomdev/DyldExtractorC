@@ -10,8 +10,8 @@ RETRY_MESSAGE = "The paging file is too small"
 RETRY_CORE_COUNT = str(multiprocessing.cpu_count() // 2)
 BASE_PARAMS = (
     "--disable-output",
-    "-v",
-    "-q")
+    "--verbose",
+    "--quiet")
 
 
 class Arguments:
@@ -19,6 +19,8 @@ class Arguments:
     caches_path: pathlib.Path
     cache_filters: Optional[list[str]]
     pause: bool
+    skip_modules: int
+    only_validate: bool
     pass
 
 
@@ -41,6 +43,11 @@ def getArguments() -> Arguments:
     parser.add_argument("--pause", action=argparse.BooleanOptionalAction,
                         default=False,
                         help="Pause before running the next cache.")
+    parser.add_argument("--skip-modules", type=int,
+                        default=0, help="Modules to skip")
+    parser.add_argument("--only-validate",
+                        action=argparse.BooleanOptionalAction, default=False,
+                        help="Only validate images instead of processing them")
 
     args = parser.parse_args(namespace=Arguments())
     if not args.executable_path:
@@ -61,6 +68,9 @@ def getCachePaths(
     filters: Optional[list[str]]
 ) -> Generator[pathlib.Path, None, None]:
     for arch in cachePath.iterdir():
+        if not arch.is_dir():
+            continue
+
         for cache in arch.iterdir():
             if cache.is_dir():
                 path = next(c for c in cache.iterdir() if c.suffix == "")
@@ -72,9 +82,17 @@ def getCachePaths(
             yield path
 
 
-def runCache(exe: pathlib.Path, cachePath: pathlib.Path) -> bool:
+def runCache(
+    exe: pathlib.Path,
+    cachePath: pathlib.Path,
+    skipModules: int,
+    validateOnly: bool
+) -> bool:
     print(f"\nRunning {cachePath}")
     params = (exe, cachePath) + BASE_PARAMS
+    params += ("--skip-modules", str(skipModules))
+    if validateOnly:
+        params += ("--only-validate",)
 
     proc = subprocess.Popen(params, stderr=subprocess.PIPE, encoding="utf-8")
     assert proc.stderr is not None
@@ -105,9 +123,16 @@ def main():
 
     for cachePath in getCachePaths(args.caches_path, args.cache_filters):
         if args.pause:
-            input(f"Press enter to process {cachePath}")
+            try:
+                input(f"Press enter to process {cachePath}")
+            except KeyboardInterrupt:
+                return
 
-        if not runCache(args.executable_path, cachePath):
+        if not runCache(
+                args.executable_path,
+                cachePath,
+                args.skip_modules,
+                args.only_validate):
             return
         pass
     pass

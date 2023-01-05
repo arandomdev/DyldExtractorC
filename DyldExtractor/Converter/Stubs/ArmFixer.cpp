@@ -1,6 +1,7 @@
 #include "ArmFixer.h"
 
 #include "Fixer.h"
+#include <Utils/Utils.h>
 
 using namespace DyldExtractor;
 using namespace Converter;
@@ -10,8 +11,9 @@ ArmFixer::ArmFixer(Fixer<A> &delegate)
     : delegate(delegate), mCtx(delegate.mCtx), activity(delegate.activity),
       logger(delegate.logger), bindInfo(delegate.bindInfo),
       disasm(delegate.disasm), ptrTracker(delegate.ptrTracker),
-      symbolizer(delegate.symbolizer), pointerCache(delegate.pointerCache),
-      armUtils(*delegate.armUtils) {}
+      symbolizer(delegate.symbolizer),
+      stTracker(delegate.eCtx.stTracker.value()),
+      pointerCache(delegate.ptrCache), armUtils(*delegate.armUtils) {}
 
 void ArmFixer::fix() {
   fixStubHelpers();
@@ -86,7 +88,7 @@ void ArmFixer::fixStubHelpers() {
       continue;
     }
 
-    SPDLOG_LOGGER_ERROR(logger, "Unknown stub helper format at 0x{:x}",
+    SPDLOG_LOGGER_ERROR(logger, "Unknown stub helper format at {:#x}.",
                         helperAddr);
     helperAddr += REG_HELPER_SIZE; // Try to recover, will probably fail
   }
@@ -109,7 +111,7 @@ void ArmFixer::scanStubs() {
 
           const auto sDataPair = armUtils.resolveStub(sAddr);
           if (!sDataPair) {
-            SPDLOG_LOGGER_ERROR(logger, "Unknown Arm stub at {:#x}", sAddr);
+            SPDLOG_LOGGER_ERROR(logger, "Unknown Arm stub at {:#x}.", sAddr);
             continue;
           }
           const auto [sTarget, sFormat] = *sDataPair;
@@ -118,11 +120,15 @@ void ArmFixer::scanStubs() {
           std::set<Provider::SymbolicInfo::Symbol> symbols;
 
           // Though indirect entries
-          if (const auto [entry, string] =
-                  delegate.lookupIndirectEntry(indirectI);
-              entry) {
-            uint64_t ordinal = GET_LIBRARY_ORDINAL(entry->n_desc);
-            symbols.insert({std::string(string), ordinal, std::nullopt});
+          if (indirectI >= stTracker.indirectSyms.size()) {
+            SPDLOG_LOGGER_WARN(logger,
+                               "Unable to symbolize stub via indirect symbols "
+                               "as the index overruns the entries.");
+          } else {
+            const auto &[strIt, entry] =
+                stTracker.getSymbol(stTracker.indirectSyms.at(indirectI));
+            uint64_t ordinal = GET_LIBRARY_ORDINAL(entry.n_desc);
+            symbols.insert({*strIt, ordinal, std::nullopt});
           }
 
           // Though its pointer if not optimized
@@ -151,7 +157,7 @@ void ArmFixer::scanStubs() {
                         {symbols, Provider::SymbolicInfo::Encoding::None});
             brokenStubs.emplace_back(sFormat, sTargetFunc, sAddr, sLoc);
           } else {
-            SPDLOG_LOGGER_WARN(logger, "Unable to symbolize stub at {:#x}",
+            SPDLOG_LOGGER_WARN(logger, "Unable to symbolize stub at {:#x}.",
                                sAddr);
           }
         }
@@ -205,9 +211,6 @@ void ArmFixer::fixPass1() {
       }
       break;
     }
-
-    default:
-      break;
     }
 
     if (fixed) {
@@ -285,7 +288,7 @@ void ArmFixer::fixPass2() {
       }
 
       if (!pAddr) {
-        SPDLOG_LOGGER_WARN(logger, "Unable to fix optimized stub at {:#x}",
+        SPDLOG_LOGGER_WARN(logger, "Unable to fix optimized stub at {:#x}.",
                            sAddr);
         break;
       }
@@ -296,7 +299,7 @@ void ArmFixer::fixPass2() {
     }
 
     default:
-      break;
+      Utils::unreachable();
     }
   }
 }
@@ -308,7 +311,10 @@ void ArmFixer::fixCallsites() {
   auto textAddr = textSect->addr;
   auto textData = mCtx.convertAddrP(textAddr);
 
-  for (const auto &inst : disasm.instructions) {
+  for (auto it = disasm.instructionsBegin(); it != disasm.instructionsEnd();
+       it++) {
+    const auto &inst = *it;
+
     // only look for arm immediate branch instructions
     const bool isBL = inst.id == ARM_INS_BL;
     const bool isBLX = inst.id == ARM_INS_BLX;
@@ -339,13 +345,10 @@ void ArmFixer::fixCallsites() {
       auto iLoc = (uint32_t *)(textData + (iAddr - textAddr));
       auto iLocAligned = (uint32_t *)(textData + (iAddr - 2 - textAddr));
 
-      auto fTarget = delegate.resolveStubChain(brTarget);
+      auto fTarget = armUtils.resolveStubChain(brTarget);
       auto names = symbolizer.symbolizeAddr(fTarget & -4);
       if (!names) {
         // Too many edge cases for meaningful diagnostics
-        // SPDLOG_LOGGER_DEBUG(
-        //     logger, "Unable to symbolize branch at {:#x} with target {:#x}",
-        //     iAddr, brTarget);
         continue;
       }
 
@@ -385,11 +388,19 @@ void ArmFixer::fixCallsites() {
         activity.update();
         continue;
       } else {
+        const auto &symbols = names->symbols;
+        std::string symbolNames;
+        for (auto it = symbols.cbegin(); it != std::prev(symbols.cend());
+             it++) {
+          symbolNames += it->name + ", ";
+        }
+        symbolNames += symbols.crbegin()->name;
+
         SPDLOG_LOGGER_DEBUG(
             logger,
             "Unable to find stub for branch at {:#x}, with target "
-            "{:#x}, with symbols {}",
-            iAddr, brTarget, fmt::join(names->symbols, ", "));
+            "{:#x}, with symbols {}.",
+            iAddr, brTarget, symbolNames);
       }
     }
   }

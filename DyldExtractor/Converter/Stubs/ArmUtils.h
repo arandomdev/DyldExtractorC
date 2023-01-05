@@ -30,7 +30,8 @@ public:
     PtrT size;
   };
 
-  ArmUtils(Utils::ExtractionContext<A> &eCtx);
+  ArmUtils(const Dyld::Context &dCtx, Provider::Accelerator<P> &accelerator,
+           const Provider::PointerTracker<P> &ptrTracker);
 
   /// @brief Sign extend a number
   /// @tparam T The type of the number

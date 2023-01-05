@@ -9,12 +9,12 @@ uint64_t Utils::readUleb128(const uint8_t *&p, const uint8_t *end) {
   int bit = 0;
   do {
     if (p == end) {
-      throw std::invalid_argument("malformed uleb128");
+      throw std::invalid_argument("malformed uleb128.");
     }
     uint64_t slice = *p & 0x7f;
 
     if (bit > 63) {
-      throw std::invalid_argument("uleb128 too big for uint64");
+      throw std::invalid_argument("uleb128 too big for uint64.");
     } else {
       result |= (slice << bit);
       bit += 7;
@@ -29,7 +29,7 @@ int64_t Utils::readSleb128(const uint8_t *&p, const uint8_t *end) {
   uint8_t byte = 0;
   do {
     if (p == end) {
-      throw std::invalid_argument("malformed sleb128");
+      throw std::invalid_argument("malformed sleb128.");
     }
     byte = *p++;
     result |= (((int64_t)(byte & 0x7f)) << bit);

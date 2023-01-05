@@ -9,26 +9,21 @@ using namespace Stubs;
 
 template <class A>
 Fixer<A>::Fixer(Utils::ExtractionContext<A> &eCtx)
-    : eCtx(eCtx), dCtx(*eCtx.dCtx), mCtx(*eCtx.mCtx), activity(*eCtx.activity),
-      logger(eCtx.logger), accelerator(*eCtx.accelerator),
-      bindInfo(eCtx.bindInfo), disasm(eCtx.disassembler),
-      leTracker(eCtx.leTracker), ptrTracker(eCtx.ptrTracker),
-      symbolizer(eCtx.symbolizer),
-      linkeditFile(
-          mCtx.convertAddr(mCtx.getSegment(SEG_LINKEDIT)->command->vmaddr)
-              .second),
-      symtab(mCtx.getFirstLC<Macho::Loader::symtab_command>()),
-      dysymtab(mCtx.getFirstLC<Macho::Loader::dysymtab_command>()),
-      pointerCache(*this) {
+    : eCtx(eCtx), dCtx(*eCtx.dCtx), mCtx(*eCtx.mCtx),
+      accelerator(*eCtx.accelerator), activity(*eCtx.activity),
+      logger(eCtx.logger), bindInfo(eCtx.bindInfo), disasm(eCtx.disasm),
+      leTracker(eCtx.leTracker.value()), stTracker(eCtx.stTracker.value()),
+      ptrTracker(eCtx.ptrTracker), symbolizer(eCtx.symbolizer.value()),
+      ptrCache(*eCtx.mCtx, *eCtx.activity, eCtx.logger, eCtx.ptrTracker,
+               eCtx.symbolizer.value(), eCtx.stTracker.value(), arm64Utils,
+               armUtils) {
   if constexpr (std::is_same_v<A, Utils::Arch::arm64> ||
                 std::is_same_v<A, Utils::Arch::arm64_32>) {
-    arm64Utils.emplace(eCtx);
+    arm64Utils.emplace(dCtx, accelerator, ptrTracker);
     arm64Fixer.emplace(*this);
   } else if constexpr (std::is_same_v<A, Utils::Arch::arm>) {
-    armUtils.emplace(eCtx);
+    armUtils.emplace(dCtx, accelerator, ptrTracker);
     armFixer.emplace(*this);
-  } else if constexpr (std::is_same_v<A, Utils::Arch::x86_64>) {
-    throw std::logic_error("Stub Fixer does not support x85_64");
   }
 }
 
@@ -50,8 +45,7 @@ template <class A> void Fixer<A>::fix() {
   }
 
   checkIndirectEntries();
-  symbolizer.enumerate();
-  pointerCache.scanPointers();
+  ptrCache.scanPointers();
 
   if constexpr (std::is_same_v<A, Utils::Arch::arm64> ||
                 std::is_same_v<A, Utils::Arch::arm64_32>) {
@@ -64,81 +58,45 @@ template <class A> void Fixer<A>::fix() {
   bindPointers();
 }
 
-template <class A>
-std::pair<const Macho::Loader::nlist<typename A::P> *, const char *>
-Fixer<A>::lookupIndirectEntry(const uint32_t index) const {
-  const auto indirectEntry =
-      *((uint32_t *)(linkeditFile + dysymtab->indirectsymoff) + index);
-  if (isRedactedIndirect(indirectEntry)) {
-    return std::make_pair(nullptr, nullptr);
-  }
-
-  // Indirect entry is an index into the symbol entries
-  const auto entry =
-      (Macho::Loader::nlist<P> *)(linkeditFile + symtab->symoff) +
-      indirectEntry;
-  const auto string =
-      (char *)(linkeditFile + symtab->stroff + entry->n_un.n_strx);
-  return std::make_pair(entry, string);
-}
-
-template <class A> Fixer<A>::PtrT Fixer<A>::resolveStubChain(const PtrT addr) {
-  if constexpr (std::is_same_v<A, Utils::Arch::arm64> ||
-                std::is_same_v<A, Utils::Arch::arm64_32>) {
-    return arm64Utils->resolveStubChain(addr);
-  } else if constexpr (std::is_same_v<A, Utils::Arch::arm>) {
-    return armUtils->resolveStubChain(addr);
-  }
-
-  throw std::logic_error("Arch not supported");
-}
-
+/**
+ * This checks if all the sections that have indirect symbols entries are synced
+ * with the tracked indicies. It also generates redacted indirect symbols for
+ * sections that should have them but don't.
+ */
 template <class A> void Fixer<A>::checkIndirectEntries() {
   activity.update(std::nullopt, "Checking indirect entires");
 
-  if (!dysymtab->indirectsymoff) {
-    return;
-  }
+  auto &indirectSyms = stTracker.indirectSyms;
+  uint32_t currentI = 0;
+  bool hasIndirectSyms = false;
 
-  bool changed = false;
-  bool hasStubs = false;
-  std::vector<uint32_t> newEntries;
-  auto indirectEntires = (uint32_t *)(linkeditFile + dysymtab->indirectsymoff);
-
+  /// TODO: Verify adding new indirect sym indicies
   mCtx.enumerateSections([&](auto seg, auto sect) {
     activity.update();
-    uint32_t newStartIndex = (uint32_t)newEntries.size();
 
     // Normal case
     switch (sect->flags & SECTION_TYPE) {
+    case S_SYMBOL_STUBS: {
+      hasIndirectSyms = true;
+      if (sect->reserved1 != currentI) {
+        sect->reserved1 = currentI;
+      }
+      currentI += (uint32_t)(sect->size / sect->reserved2);
+      return true;
+    }
+
     case S_NON_LAZY_SYMBOL_POINTERS:
     case S_LAZY_SYMBOL_POINTERS:
     case S_THREAD_LOCAL_VARIABLE_POINTERS:
     case S_LAZY_DYLIB_SYMBOL_POINTERS: {
-      uint32_t n = (uint32_t)(sect->size / sizeof(PtrT));
-      uint32_t *start = indirectEntires + sect->reserved1;
-      newEntries.insert(newEntries.end(), start, start + n);
-
-      if (sect->reserved1 != newStartIndex) {
-        sect->reserved1 = newStartIndex;
-        changed = true;
+      hasIndirectSyms = true;
+      if (sect->reserved1 != currentI) {
+        sect->reserved1 = currentI;
       }
+      currentI += (uint32_t)(sect->size / sizeof(PtrT));
       return true;
-      break;
     }
-    case S_SYMBOL_STUBS: {
-      hasStubs = true;
-      uint32_t n = (uint32_t)(sect->size / sect->reserved2);
-      uint32_t *start = indirectEntires + sect->reserved1;
-      newEntries.insert(newEntries.end(), start, start + n);
 
-      if (sect->reserved1 != newStartIndex) {
-        sect->reserved1 = newStartIndex;
-        changed = true;
-      }
-      return true;
-      break;
-    }
     default:
       break;
     }
@@ -146,55 +104,32 @@ template <class A> void Fixer<A>::checkIndirectEntries() {
     if ((memcmp(sect->sectname, "__got", 6) == 0 ||
          memcmp(sect->sectname, "__auth_got", 11) == 0) &&
         ((sect->flags & SECTION_TYPE) == 0)) {
-      sect->flags |= S_NON_LAZY_SYMBOL_POINTERS;
+      sect->flags |= S_NON_LAZY_SYMBOL_POINTERS; // set flag again
 
-      if ((hasStubs && sect->reserved1 != 0) ||
-          (!hasStubs && sect->reserved1 == 0)) {
+      if ((hasIndirectSyms && sect->reserved1 != 0) ||
+          (!hasIndirectSyms && sect->reserved1 == 0)) {
         // section type was removed, but index is still valid
-        uint32_t n = (uint32_t)(sect->size / sizeof(PtrT));
-        uint32_t *start = indirectEntires + sect->reserved1;
-        newEntries.insert(newEntries.end(), start, start + n);
-
-        if (sect->reserved1 != newStartIndex) {
-          sect->reserved1 = newStartIndex;
-          changed = true;
+        if (sect->reserved1 != currentI) {
+          sect->reserved1 = currentI;
         }
+        currentI += (uint32_t)(sect->size / sizeof(PtrT));
       } else {
         // need to add redacted entries
-        eCtx.hasRedactedIndirect = true;
-        changed = true;
-        sect->reserved1 = newStartIndex;
+        if (sect->reserved1 != currentI) {
+          sect->reserved1 = currentI;
+        }
+
         uint32_t n = (uint32_t)(sect->size / sizeof(PtrT));
-        newEntries.insert(newEntries.end(), n, 0x0);
+        indirectSyms.insert(indirectSyms.begin() + currentI, n,
+                            stTracker.getOrMakeRedactedSymIndex());
+        currentI += n;
       }
 
-      return true;
+      hasIndirectSyms = true;
     }
 
     return true;
   });
-
-  if (!changed) {
-    return;
-  }
-
-  // Resize the data region
-  auto entriesMetadata =
-      leTracker.findTag(Provider::LinkeditTracker<P>::Tag::indirectSymtab);
-  if (entriesMetadata == leTracker.metadataEnd()) {
-    SPDLOG_LOGGER_ERROR(logger, "Unable to find indirect entries data");
-    return;
-  }
-  uint32_t sizeOfEntries = (uint32_t)newEntries.size() * sizeof(uint32_t);
-  if (auto it =
-          leTracker.resizeData(entriesMetadata, Utils::align(sizeOfEntries, 8));
-      it != leTracker.metadataEnd()) {
-    // overwrite data and update command
-    memcpy(it->data, newEntries.data(), sizeOfEntries);
-    dysymtab->nindirectsyms = (uint32_t)newEntries.size();
-  } else {
-    SPDLOG_LOGGER_ERROR(logger, "Unable to resize indirect entries data");
-  }
 }
 
 template <class A> void Fixer<A>::fixIndirectEntries() {
@@ -205,58 +140,57 @@ template <class A> void Fixer<A>::fixIndirectEntries() {
    * stubs and other pointers.
    */
 
-  if (!eCtx.hasRedactedIndirect) {
+  if (!stTracker.getRedactedSymIndex()) {
     return;
   }
 
-  /// TODO: Use string pool to better coalesce strings
   activity.update(std::nullopt, "Fixing Indirect Symbols");
-
-  auto indirectEntries = (uint32_t *)(linkeditFile + dysymtab->indirectsymoff);
-  std::vector<Macho::Loader::nlist<P>> newEntries;
-  std::vector<std::string> newStrings;
-  uint32_t entryIndex = dysymtab->iundefsym + dysymtab->nundefsym;
-  uint32_t stringsIndex = symtab->strsize;
 
   mCtx.enumerateSections([&](auto seg, auto sect) {
     switch (sect->flags & SECTION_TYPE) {
     case S_NON_LAZY_SYMBOL_POINTERS:
     case S_LAZY_SYMBOL_POINTERS: {
-      auto pType = pointerCache.getPointerType(sect);
+      auto pType = ptrCache.getPointerType(sect);
 
       uint32_t indirectI = sect->reserved1;
       for (PtrT pAddr = sect->addr; pAddr < sect->addr + sect->size;
            pAddr += sizeof(PtrT), indirectI++) {
-        auto indirectEntry = indirectEntries + indirectI;
-        if (!isRedactedIndirect(*indirectEntry)) {
+        auto &symIndex = stTracker.indirectSyms.at(indirectI);
+        if (symIndex != stTracker.getRedactedSymIndex()) {
           continue;
         }
 
-        auto pInfo = pointerCache.getPointerInfo(pType, pAddr);
+        // Symbolize the pointer
+        auto pInfo = ptrCache.getPointerInfo(pType, pAddr);
         if (!pInfo) {
           if (!mCtx.containsAddr(ptrTracker.slideP(pAddr))) {
+            PtrT target;
+            if constexpr (std::is_same_v<A, Utils::Arch::arm64> ||
+                          std::is_same_v<A, Utils::Arch::arm64_32>) {
+              target = arm64Utils->resolveStubChain(ptrTracker.slideP(pAddr));
+            } else if constexpr (std::is_same_v<A, Utils::Arch::arm>) {
+              target = armUtils->resolveStubChain(ptrTracker.slideP(pAddr));
+            }
             SPDLOG_LOGGER_DEBUG(
                 logger,
                 "Unable to symbolize pointer at {:#x}, with target {:#x}, "
                 "for redacted indirect symbol entry.",
-                pAddr, resolveStubChain(ptrTracker.slideP(pAddr)));
+                pAddr, target);
           }
+
+          // Might point to something internal, ignore
           continue;
         }
         const auto &preferredSym = pInfo->preferredSymbol();
 
-        // Create new entry and add string
-        Macho::Loader::nlist<P> entry{};
-        entry.n_type = 1;
-        SET_LIBRARY_ORDINAL(entry.n_desc, (uint16_t)preferredSym.ordinal);
-        entry.n_un.n_strx = stringsIndex;
-
-        newEntries.push_back(entry);
-        newStrings.push_back(preferredSym.name);
-        *indirectEntry = entryIndex;
-
-        entryIndex++;
-        stringsIndex += (uint32_t)preferredSym.name.length() + 1;
+        // Create new string and entry
+        auto &str = stTracker.addString(preferredSym.name);
+        /// TODO: Check if symbol types are correct
+        Macho::Loader::nlist<P> sym{};
+        sym.n_type = 1;
+        SET_LIBRARY_ORDINAL(sym.n_desc, (uint16_t)preferredSym.ordinal);
+        auto newSymIndex = stTracker.addSym(STSymbolType::undefined, str, sym);
+        stTracker.indirectSyms[indirectI] = newSymIndex;
       }
       break;
     }
@@ -265,8 +199,8 @@ template <class A> void Fixer<A>::fixIndirectEntries() {
       uint32_t indirectI = sect->reserved1;
       for (PtrT sAddr = sect->addr; sAddr < sect->addr + sect->size;
            sAddr += sect->reserved2, indirectI++) {
-        auto indirectEntry = indirectEntries + indirectI;
-        if (!isRedactedIndirect(*indirectEntry)) {
+        auto &symIndex = stTracker.indirectSyms.at(indirectI);
+        if (symIndex != stTracker.getRedactedSymIndex()) {
           continue;
         }
 
@@ -290,18 +224,14 @@ template <class A> void Fixer<A>::fixIndirectEntries() {
         }
         const auto &preferredSym = sInfo->preferredSymbol();
 
-        // Create new entry and add string
-        Macho::Loader::nlist<P> entry{};
-        entry.n_type = 1;
-        SET_LIBRARY_ORDINAL(entry.n_desc, (uint16_t)preferredSym.ordinal);
-        entry.n_un.n_strx = stringsIndex;
-
-        newEntries.push_back(entry);
-        newStrings.push_back(preferredSym.name);
-        *indirectEntry = entryIndex;
-
-        entryIndex++;
-        stringsIndex += (uint32_t)preferredSym.name.length() + 1;
+        // Create new string and entry
+        auto &str = stTracker.addString(preferredSym.name);
+        /// TODO: Check if symbol types are correct
+        Macho::Loader::nlist<P> sym{};
+        sym.n_type = 1;
+        SET_LIBRARY_ORDINAL(sym.n_desc, (uint16_t)preferredSym.ordinal);
+        auto newSymIndex = stTracker.addSym(STSymbolType::undefined, str, sym);
+        stTracker.indirectSyms[indirectI] = newSymIndex;
       }
       break;
     }
@@ -322,63 +252,15 @@ template <class A> void Fixer<A>::fixIndirectEntries() {
 
     return true;
   });
-
-  // Extend the entries region and add the data
-  auto entriesMetadata =
-      leTracker.findTag(Provider::LinkeditTracker<P>::Tag::symbolEntries);
-  if (entriesMetadata == leTracker.metadataEnd()) {
-    SPDLOG_LOGGER_ERROR(logger, "Unable to find symbol entries data");
-    return;
-  }
-  uint8_t *newEntriesLoc =
-      entriesMetadata->data + (symtab->nsyms * sizeof(Macho::Loader::nlist<P>));
-  const uint32_t sizeOfNewEntries =
-      (uint32_t)newEntries.size() * sizeof(Macho::Loader::nlist<P>);
-  if (auto it = leTracker.resizeData(
-          entriesMetadata,
-          Utils::align(entriesMetadata->dataSize + sizeOfNewEntries, 8));
-      it == leTracker.metadataEnd()) {
-    SPDLOG_LOGGER_ERROR(logger, "Unable to extend the symbol entries region");
-    return;
-  }
-
-  memcpy(newEntriesLoc, newEntries.data(), sizeOfNewEntries);
-
-  // Extend the strings region and add the data
-  auto stringsMetadata =
-      leTracker.findTag(Provider::LinkeditTracker<P>::Tag::stringPool);
-  if (stringsMetadata == leTracker.metadataEnd()) {
-    SPDLOG_LOGGER_ERROR(logger, "Unable to find the strings data");
-    return;
-  }
-  uint8_t *newStringsLoc = stringsMetadata->data + symtab->strsize;
-  const uint32_t sizeOfNewStrings = stringsIndex - symtab->strsize;
-  if (auto it = leTracker.resizeData(
-          stringsMetadata,
-          Utils::align(stringsMetadata->dataSize + sizeOfNewStrings, 8));
-      it == leTracker.metadataEnd()) {
-    SPDLOG_LOGGER_ERROR(logger, "Unable to extend the strings region");
-    return;
-  }
-
-  for (auto &string : newStrings) {
-    memcpy(newStringsLoc, string.c_str(), string.length() + 1);
-    newStringsLoc += string.length() + 1;
-  }
-
-  // update the commands
-  symtab->nsyms += (uint32_t)newEntries.size();
-  symtab->strsize += sizeOfNewStrings;
-  dysymtab->nundefsym += (uint32_t)newEntries.size();
 }
 
 /// @brief Bind non lazy symbol pointers
 template <class A> void Fixer<A>::bindPointers() {
-  for (auto &[pAddr, info] : pointerCache.ptr.normal) {
+  for (auto &[pAddr, info] : ptrCache.ptr.normal) {
     ptrTracker.add(pAddr, 0);
     ptrTracker.addBind(pAddr, info);
   }
-  for (auto &[pAddr, info] : pointerCache.ptr.auth) {
+  for (auto &[pAddr, info] : ptrCache.ptr.auth) {
     ptrTracker.add(pAddr, 0);
     ptrTracker.addBind(pAddr, info);
   }
@@ -407,8 +289,17 @@ template <class A> void Converter::fixStubs(Utils::ExtractionContext<A> &eCtx) {
   if constexpr (std::is_same_v<A, Utils::Arch::arm> ||
                 std::is_same_v<A, Utils::Arch::arm64> ||
                 std::is_same_v<A, Utils::Arch::arm64_32>) {
-    eCtx.disassembler.disasm();
+    // Load providers
+    eCtx.bindInfo.load();
+    eCtx.disasm.load();
+
     eCtx.activity->update("Stub Fixer", "Starting Up");
+    if (!eCtx.symbolizer || !eCtx.leTracker || !eCtx.stTracker) {
+      SPDLOG_LOGGER_ERROR(eCtx.logger,
+                          "StubFixer depends on Linkedit Optimizer.");
+      return;
+    }
+
     Fixer<A>(eCtx).fix();
   }
 

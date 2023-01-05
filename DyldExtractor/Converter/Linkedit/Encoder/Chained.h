@@ -64,6 +64,8 @@ class ChainedEncoder {
   using P = A::P;
   using PtrT = P::PtrT;
 
+  using LETrackerTag = Provider::LinkeditTracker<P>::Tag;
+
 public:
   ChainedEncoder(Utils::ExtractionContext<A> &eCtx);
 
@@ -89,17 +91,20 @@ private:
   void fixup64e();
 
   Macho::Context<false, P> &mCtx;
-  Logger::Activity &activity;
+  Provider::ActivityLogger &activity;
   std::shared_ptr<spdlog::logger> logger;
-
-  Provider::ExtraData<P> &exObjc;
-  Provider::LinkeditTracker<P> &leTracker;
   Provider::PointerTracker<P> &ptrTracker;
+  Provider::LinkeditTracker<P> &leTracker;
+  Provider::SymbolTableTracker<P> &stTracker;
+  std::optional<Provider::ExtraData<P>> &exObjc;
 
   ChainedFixupBinds chainedFixupBinds;
   std::vector<ChainedFixupSegInfo> chainedFixupSegments;
 
-  std::map<PtrT, Atom> atomMap;
+  // Map of symbolic info to atoms
+  std::map<std::shared_ptr<Provider::SymbolicInfo>, Atom> atomMap;
+  // Map of bind address to atoms
+  std::map<PtrT, Atom *> bindToAtoms;
 };
 
 } // namespace DyldExtractor::Converter::Linkedit::Encoder

@@ -286,12 +286,13 @@ template <class A> int server(ProgramArguments &args, Dyld::Context &dCtx) {
       SHARED_MESSAGE_QUEUE_NAME)(sharedMemory.get_segment_manager());
 
   // Server setup
-  Logger::Activity activity("dyldex_all_multiprocess", std::cout, true);
-  activity.logger->set_pattern("[%T:%e %-8l %s:%#] %v");
+  Provider::ActivityLogger activity("dyldex_all_multiprocess", std::cout, true);
+  auto logger = activity.getLogger();
+  logger->set_pattern("[%T:%e %-8l %s:%#] %v");
   if (args.verbose) {
-    activity.logger->set_level(spdlog::level::trace);
+    logger->set_level(spdlog::level::trace);
   } else {
-    activity.logger->set_level(spdlog::level::info);
+    logger->set_level(spdlog::level::info);
   }
   activity.update("DyldEx All", "Starting up");
 
@@ -455,13 +456,14 @@ processImage(ProgramArguments &args, Dyld::Context &dCtx,
 
   // Setup context
   std::ostringstream loggerStream;
-  Logger::Activity activity("dyldex_all_multiprocess_" + imageName,
-                            loggerStream, false);
-  activity.logger->set_pattern("[%-8l %s:%#] %v");
+  Provider::ActivityLogger activity("dyldex_all_multiprocess_" + imageName,
+                                    loggerStream, false);
+  auto logger = activity.getLogger();
+  logger->set_pattern("[%-8l %s:%#] %v");
   if (args.verbose) {
-    activity.logger->set_level(spdlog::level::trace);
+    logger->set_level(spdlog::level::trace);
   } else {
-    activity.logger->set_level(spdlog::level::info);
+    logger->set_level(spdlog::level::info);
   }
 
   auto mCtx = dCtx.createMachoCtx<false, P>(imageInfo);
@@ -470,7 +472,7 @@ processImage(ProgramArguments &args, Dyld::Context &dCtx,
   try {
     Provider::Validator<P>(mCtx).validate();
   } catch (const std::exception &e) {
-    SPDLOG_LOGGER_ERROR(activity.logger, "Validation Error: {}", e.what());
+    SPDLOG_LOGGER_ERROR(logger, "Validation Error: {}.", e.what());
     return loggerStream;
   }
 
@@ -478,7 +480,7 @@ processImage(ProgramArguments &args, Dyld::Context &dCtx,
     return loggerStream;
   }
 
-  Utils::ExtractionContext<A> eCtx(dCtx, mCtx, activity, accelerator);
+  Utils::ExtractionContext<A> eCtx(dCtx, mCtx, accelerator, activity);
 
   // Process image
   if (!args.modulesDisabled.processSlideInfo) {
@@ -499,8 +501,7 @@ processImage(ProgramArguments &args, Dyld::Context &dCtx,
   if (args.imbedVersion) {
     if constexpr (!std::is_same_v<P, Utils::Arch::Pointer64>) {
       SPDLOG_LOGGER_ERROR(
-          activity.logger,
-          "Unable to imbed version info in a non 64 bit image.");
+          logger, "Unable to imbed version info in a non 64 bit image.");
     } else {
       mCtx.header->reserved = DYLDEXTRACTORC_VERSION_DATA;
     }
@@ -519,7 +520,7 @@ processImage(ProgramArguments &args, Dyld::Context &dCtx,
       }
       outFile.close();
     } else {
-      SPDLOG_LOGGER_ERROR(activity.logger, "Unable to open output file.");
+      SPDLOG_LOGGER_ERROR(logger, "Unable to open output file.");
     }
   }
 

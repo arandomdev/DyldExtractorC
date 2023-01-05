@@ -132,48 +132,95 @@ void readBindStream(
 
     default:
       throw std::invalid_argument(
-          fmt::format("Unknown bind opcode 0x{:02x}", *p));
+          fmt::format("Unknown bind opcode 0x{:02x}.", *p));
     }
   }
 }
 
 template <class P>
-BindInfo<P>::BindInfo(const Macho::Context<false, P> &mCtx) : mCtx(&mCtx) {
-  linkeditFile =
-      mCtx.convertAddr(mCtx.getSegment(SEG_LINKEDIT)->command->vmaddr).second;
-  dyldInfo = mCtx.getFirstLC<Macho::Loader::dyld_info_command>();
-}
+BindInfo<P>::BindInfo(const Macho::Context<false, P> &mCtx,
+                      Provider::ActivityLogger &activity)
+    : mCtx(&mCtx), activity(&activity) {}
 
-template <class P> const std::vector<BindRecord> &BindInfo<P>::getBinds() {
-  if (!readStatus.bind) {
-    readBinds();
+template <class P> void BindInfo<P>::load() {
+  if (dataLoaded) {
+    return;
   }
 
+  const uint8_t *linkeditFile =
+      mCtx->convertAddr(mCtx->getSegment(SEG_LINKEDIT)->command->vmaddr).second;
+  const dyld_info_command *dyldInfo =
+      mCtx->getFirstLC<Macho::Loader::dyld_info_command>();
+
+  activity->update("BindInfo", "Starting up");
+  if (dyldInfo && dyldInfo->bind_size) {
+    activity->update(std::nullopt, "Reading Binding Info");
+    auto bindStart = linkeditFile + dyldInfo->bind_off;
+    auto bindEnd = bindStart + dyldInfo->bind_size;
+    readBindStream<P>(bindStart, bindEnd, true,
+                      [this](uint32_t, IntermediateBindRecord record) {
+                        binds.emplace_back(
+                            mCtx->segments.at(record.segIndex).command->vmaddr +
+                                record.segOffset,
+                            record.type, record.flags, record.libOrdinal,
+                            record.symbolName, record.addend);
+                        return true;
+                      });
+  }
+
+  if (dyldInfo && dyldInfo->weak_bind_size) {
+    activity->update(std::nullopt, "Reading Weak Binding Info");
+    auto bindStart = linkeditFile + dyldInfo->weak_bind_off;
+    auto bindEnd = bindStart + dyldInfo->weak_bind_size;
+    readBindStream<P>(bindStart, bindEnd, true,
+                      [this](uint32_t, IntermediateBindRecord record) {
+                        weakBinds.emplace_back(
+                            mCtx->segments.at(record.segIndex).command->vmaddr +
+                                record.segOffset,
+                            record.type, record.flags, record.libOrdinal,
+                            record.symbolName, record.addend);
+                        return true;
+                      });
+  }
+
+  if (dyldInfo && dyldInfo->lazy_bind_size) {
+    activity->update(std::nullopt, "Reading Lazy Binding Info");
+    auto bindStart = linkeditFile + dyldInfo->lazy_bind_off;
+    auto bindEnd = bindStart + dyldInfo->lazy_bind_size;
+    readBindStream<P>(
+        bindStart, bindEnd, false,
+        [this](uint32_t off, IntermediateBindRecord record) {
+          lazyBinds.emplace(
+              off,
+              BindRecord{mCtx->segments.at(record.segIndex).command->vmaddr +
+                             record.segOffset,
+                         record.type, record.flags, record.libOrdinal,
+                         record.symbolName, record.addend});
+          return true;
+        });
+  }
+
+  _hasLazyBinds = dyldInfo != nullptr && dyldInfo->lazy_bind_size != 0;
+  dataLoaded = true;
+}
+
+template <class P>
+const std::vector<BindRecord> &BindInfo<P>::getBinds() const {
   return binds;
 }
 
-template <class P> const std::vector<BindRecord> &BindInfo<P>::getWeakBinds() {
-  if (!readStatus.weak) {
-    readWeakBinds();
-  }
-
+template <class P>
+const std::vector<BindRecord> &BindInfo<P>::getWeakBinds() const {
   return weakBinds;
 }
 
 template <class P>
-const std::map<uint32_t, BindRecord> &BindInfo<P>::getLazyBinds() {
-  if (!readStatus.lazy) {
-    readLazyBinds();
-  }
-
+const std::map<uint32_t, BindRecord> &BindInfo<P>::getLazyBinds() const {
   return lazyBinds;
 }
 
-template <class P> const BindRecord *BindInfo<P>::getLazyBind(uint32_t offset) {
-  if (!readStatus.lazy) {
-    readLazyBinds();
-  }
-
+template <class P>
+const BindRecord *BindInfo<P>::getLazyBind(uint32_t offset) const {
   if (lazyBinds.contains(offset)) {
     return &lazyBinds.at(offset);
   } else {
@@ -182,83 +229,7 @@ template <class P> const BindRecord *BindInfo<P>::getLazyBind(uint32_t offset) {
 }
 
 template <class P> bool BindInfo<P>::hasLazyBinds() const {
-  return dyldInfo != nullptr && dyldInfo->lazy_bind_size != 0;
-}
-
-template <class P> void BindInfo<P>::readBinds() {
-  if (readStatus.bind) {
-    return;
-  }
-
-  if (!dyldInfo || !dyldInfo->bind_size) {
-    readStatus.bind = true;
-    return;
-  }
-
-  auto bindStart = linkeditFile + dyldInfo->bind_off;
-  auto bindEnd = bindStart + dyldInfo->bind_size;
-  readBindStream<P>(bindStart, bindEnd, true,
-                    [this](uint32_t, IntermediateBindRecord record) {
-                      binds.emplace_back(
-                          mCtx->segments.at(record.segIndex).command->vmaddr +
-                              record.segOffset,
-                          record.type, record.flags, record.libOrdinal,
-                          record.symbolName, record.addend);
-                      return true;
-                    });
-
-  readStatus.bind = true;
-}
-
-template <class P> void BindInfo<P>::readWeakBinds() {
-  if (readStatus.weak) {
-    return;
-  }
-
-  if (!dyldInfo || !dyldInfo->weak_bind_size) {
-    readStatus.weak = true;
-    return;
-  }
-
-  auto bindStart = linkeditFile + dyldInfo->weak_bind_off;
-  auto bindEnd = bindStart + dyldInfo->weak_bind_size;
-  readBindStream<P>(bindStart, bindEnd, true,
-                    [this](uint32_t, IntermediateBindRecord record) {
-                      weakBinds.emplace_back(
-                          mCtx->segments.at(record.segIndex).command->vmaddr +
-                              record.segOffset,
-                          record.type, record.flags, record.libOrdinal,
-                          record.symbolName, record.addend);
-                      return true;
-                    });
-
-  readStatus.weak = true;
-}
-
-template <class P> void BindInfo<P>::readLazyBinds() {
-  if (readStatus.lazy) {
-    return;
-  }
-
-  if (!dyldInfo || !dyldInfo->lazy_bind_size) {
-    readStatus.lazy = true;
-    return;
-  }
-
-  auto bindStart = linkeditFile + dyldInfo->lazy_bind_off;
-  auto bindEnd = bindStart + dyldInfo->lazy_bind_size;
-  readBindStream<P>(
-      bindStart, bindEnd, false,
-      [this](uint32_t off, IntermediateBindRecord record) {
-        lazyBinds.emplace(
-            off, BindRecord{mCtx->segments.at(record.segIndex).command->vmaddr +
-                                record.segOffset,
-                            record.type, record.flags, record.libOrdinal,
-                            record.symbolName, record.addend});
-        return true;
-      });
-
-  readStatus.lazy = true;
+  return _hasLazyBinds;
 }
 
 template class BindInfo<Utils::Arch::Pointer32>;

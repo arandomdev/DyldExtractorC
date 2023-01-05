@@ -14,15 +14,14 @@ template <class A> class Fixer {
   friend class ArmFixer;
   using P = A::P;
   using PtrT = P::PtrT;
+  using LETrackerTag = Provider::LinkeditTracker<P>::Tag;
+  using STSymbolType = Provider::SymbolTableTracker<P>::SymbolType;
 
 public:
   Fixer(Utils::ExtractionContext<A> &eCtx);
   void fix();
 
 private:
-  std::pair<const Macho::Loader::nlist<P> *, const char *>
-  lookupIndirectEntry(const uint32_t index) const;
-  PtrT resolveStubChain(const PtrT addr);
   void checkIndirectEntries();
   void fixIndirectEntries();
   void bindPointers();
@@ -32,20 +31,17 @@ private:
   Utils::ExtractionContext<A> &eCtx;
   const Dyld::Context &dCtx;
   Macho::Context<false, P> &mCtx;
-  Logger::Activity &activity;
-  std::shared_ptr<spdlog::logger> logger;
   Provider::Accelerator<P> &accelerator;
+  Provider::ActivityLogger &activity;
+  std::shared_ptr<spdlog::logger> logger;
   Provider::BindInfo<P> &bindInfo;
   Provider::Disassembler<A> &disasm;
-  Provider::LinkeditTracker<P> &leTracker;
   Provider::PointerTracker<P> &ptrTracker;
   Provider::Symbolizer<A> &symbolizer;
+  Provider::LinkeditTracker<P> &leTracker;
+  Provider::SymbolTableTracker<P> &stTracker;
 
-  uint8_t *linkeditFile;
-  Macho::Loader::symtab_command *symtab;
-  Macho::Loader::dysymtab_command *dysymtab;
-
-  SymbolPointerCache<A> pointerCache;
+  SymbolPointerCache<A> ptrCache;
 
   std::optional<Arm64Utils<A>> arm64Utils;
   std::optional<Arm64Fixer<A>> arm64Fixer;

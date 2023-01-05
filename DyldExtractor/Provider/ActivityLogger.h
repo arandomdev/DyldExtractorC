@@ -1,47 +1,45 @@
-#ifndef __LOGGER_ACTIVITY__
-#define __LOGGER_ACTIVITY__
+#ifndef __PROVIDER_ACTIVITYLOGGER__
+#define __PROVIDER_ACTIVITYLOGGER__
 
 #include <chrono>
 #include <iostream>
 #include <spdlog/logger.h>
 #include <spdlog/sinks/ostream_sink.h>
 
-namespace DyldExtractor::Logger {
+namespace DyldExtractor::Provider {
 
-/// @brief A wrapper for a streambuf that allows an activity indicator.
-///
-/// Essentially does new line, moves line up, and insert line, before
-/// every line.
-class StreamBuffer : public std::streambuf {
+class ActivityLogger {
+  /// @brief A wrapper for a streambuf that allows an activity indicator.
+  ///
+  /// Essentially does new line, moves line up, and insert line, before
+  /// every line.
+  class StreamBuffer : public std::streambuf {
+  public:
+    StreamBuffer(std::streambuf *buffer);
+
+  private:
+    std::streambuf *buffer;
+
+    /// Thanks to alkis-pap from github.com/p-ranav/indicators/issues/107
+    /// Move up, insert line
+    const std::string prefix = "\n\033[A\033[1L";
+    bool needPrefix;
+
+    int sync();
+    int overflow(int c);
+  };
+
 public:
-  StreamBuffer(std::streambuf *buffer);
-
-private:
-  std::streambuf *buffer;
-
-  /// Thanks to alkis-pap from github.com/p-ranav/indicators/issues/107
-  /// Move up, insert line
-  const std::string prefix = "\n\033[A\033[1L";
-  bool needPrefix;
-
-  int sync();
-  int overflow(int c);
-};
-
-class Activity {
-public:
-  std::shared_ptr<spdlog::logger> logger;
-
   /// @brief Create a logger with an optional activity indicator.
   /// @param name The name of the logger.
   /// @param output The output stream.
   /// @param enableActivity Enable or disable the activity indicator.
-  Activity(std::string name, std::ostream &output, bool enableActivity);
+  ActivityLogger(std::string name, std::ostream &output, bool enableActivity);
 
-  Activity(const Activity &) = delete;
-  Activity(const Activity &&) = delete;
-  Activity &operator=(Activity &) = delete;
-  Activity &operator=(Activity &&) = delete;
+  ActivityLogger(const ActivityLogger &) = delete;
+  ActivityLogger(const ActivityLogger &&) = delete;
+  ActivityLogger &operator=(ActivityLogger &) = delete;
+  ActivityLogger &operator=(ActivityLogger &&) = delete;
 
   /// Update the activity indicator.
   ///
@@ -54,11 +52,15 @@ public:
   /// @brief Stop the activity indicator
   void stopActivity();
 
+  /// @brief Get the spdlog logger
+  std::shared_ptr<spdlog::logger> getLogger();
+
   /// @brief Get the logger stream that won't interfere with
   /// the activity indicator.
   std::ostream &getLoggerStream();
 
 private:
+  std::shared_ptr<spdlog::logger> logger;
   std::ostream &activityStream;
   std::ostream loggerStream;
   StreamBuffer streamBuffer;
@@ -77,6 +79,6 @@ private:
   std::string _formatTime(std::chrono::seconds seconds);
 };
 
-} // namespace DyldExtractor::Logger
+} // namespace DyldExtractor::Provider
 
-#endif // __LOGGER_ACTIVITY__
+#endif // __PROVIDER_ACTIVITYLOGGER__

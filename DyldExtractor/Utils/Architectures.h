@@ -5,21 +5,6 @@
 
 namespace DyldExtractor::Utils {
 
-/// @brief Align n up to a stride k
-/// @param n The number to align.
-/// @param k The stride to align to.
-template <class T1, class T2> inline void align(T1 *n, T2 k) {
-  *n = (T1)((*n + k - 1) / k * k);
-}
-
-/// @brief Align n up to a stride k
-/// @param n The number to align.
-/// @param k The stride to align to.
-/// @returns The aligned number.
-template <class T1, class T2> inline T1 align(T1 n, T2 k) {
-  return (T1)((n + k - 1) / k * k);
-}
-
 namespace Arch {
 
 class Pointer32 {

@@ -11,7 +11,6 @@
 #include <Converter/Slide.h>
 #include <Converter/Stubs/Stubs.h>
 #include <Dyld/Context.h>
-#include <Logger/Activity.h>
 #include <Macho/Context.h>
 #include <Provider/Accelerator.h>
 #include <Provider/Validator.h>
@@ -28,6 +27,7 @@ struct ProgramArguments {
   std::optional<fs::path> outputDir;
   bool verbose;
   bool disableOutput;
+  bool onlyValidate;
   bool imbedVersion;
 
   union {
@@ -60,6 +60,11 @@ ProgramArguments parseArgs(int argc, char *argv[]) {
       .default_value(false)
       .implicit_value(true);
 
+  program.add_argument("--only-validate")
+      .help("Only validate images.")
+      .default_value(false)
+      .implicit_value(true);
+
   program.add_argument("-s", "--skip-modules")
       .help("Skip certain modules. Most modules depend on each other, so use "
             "with caution. Useful for development. 1=processSlideInfo, "
@@ -81,6 +86,7 @@ ProgramArguments parseArgs(int argc, char *argv[]) {
     args.outputDir = program.present<std::string>("--output-dir");
     args.verbose = program.get<bool>("--verbose");
     args.disableOutput = program.get<bool>("--disable-output");
+    args.onlyValidate = program.get<bool>("--only-validate");
     args.modulesDisabled.raw = program.get<int>("--skip-modules");
     args.imbedVersion = program.get<bool>("--imbed-version");
 
@@ -114,16 +120,21 @@ void runImage(Dyld::Context &dCtx,
     return;
   }
 
-  // Setup context
-  Logger::Activity activity("DyldEx_" + imageName, logStream, false);
-  activity.logger->set_pattern("[%-8l %s:%#] %v");
-  if (args.verbose) {
-    activity.logger->set_level(spdlog::level::trace);
-  } else {
-    activity.logger->set_level(spdlog::level::info);
+  if (args.onlyValidate) {
+    return;
   }
 
-  Utils::ExtractionContext<A> eCtx(dCtx, mCtx, activity, accelerator);
+  // Setup context
+  Provider::ActivityLogger activity("DyldEx_" + imageName, logStream, false);
+  auto logger = activity.getLogger();
+  logger->set_pattern("[%-8l %s:%#] %v");
+  if (args.verbose) {
+    logger->set_level(spdlog::level::trace);
+  } else {
+    logger->set_level(spdlog::level::info);
+  }
+
+  Utils::ExtractionContext<A> eCtx(dCtx, mCtx, accelerator, activity);
 
   if (!args.modulesDisabled.processSlideInfo) {
     Converter::processSlideInfo(eCtx);
@@ -143,8 +154,7 @@ void runImage(Dyld::Context &dCtx,
   if (args.imbedVersion) {
     if constexpr (!std::is_same_v<typename A::P, Utils::Arch::Pointer64>) {
       SPDLOG_LOGGER_ERROR(
-          activity.logger,
-          "Unable to imbed version info in a non 64 bit image.");
+          logger, "Unable to imbed version info in a non 64 bit image.");
     } else {
       mCtx.header->reserved = DYLDEXTRACTORC_VERSION_DATA;
     }
@@ -157,7 +167,7 @@ void runImage(Dyld::Context &dCtx,
     fs::create_directories(outputPath.parent_path());
     std::ofstream outFile(outputPath, std::ios_base::binary);
     if (!outFile.good()) {
-      SPDLOG_LOGGER_ERROR(activity.logger, "Unable to open output file.");
+      SPDLOG_LOGGER_ERROR(logger, "Unable to open output file.");
       return;
     }
 
@@ -171,12 +181,13 @@ void runImage(Dyld::Context &dCtx,
 
 template <class A>
 void runAllImages(Dyld::Context &dCtx, ProgramArguments &args) {
-  Logger::Activity activity("DyldEx_All", std::cout, true);
-  activity.logger->set_pattern("[%T:%e %-8l %s:%#] %v");
+  Provider::ActivityLogger activity("DyldEx_All", std::cout, true);
+  auto logger = activity.getLogger();
+  logger->set_pattern("[%T:%e %-8l %s:%#] %v");
   if (args.verbose) {
-    activity.logger->set_level(spdlog::level::trace);
+    logger->set_level(spdlog::level::trace);
   } else {
-    activity.logger->set_level(spdlog::level::info);
+    logger->set_level(spdlog::level::info);
   }
   activity.update("DyldEx All", "Starting up");
   int imagesProcessed = 0;

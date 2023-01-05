@@ -41,8 +41,9 @@ public:
     const uint8_t *convertAddr(const uint64_t addr) const;
   };
 
-  PointerTracker(const Dyld::Context &dCtx,
-                 std::shared_ptr<spdlog::logger> logger);
+  PointerTracker(
+      const Dyld::Context &dCtx,
+      std::optional<std::shared_ptr<spdlog::logger>> logger = std::nullopt);
   PointerTracker(const PointerTracker &) = delete;
   PointerTracker &operator=(const PointerTracker &) = delete;
 
@@ -57,7 +58,7 @@ public:
   /// @returns The slid struct.
   template <class T> T slideS(const PtrT address) const {
     T data = *reinterpret_cast<const T *>(dCtx->convertAddrP(address));
-    for (auto offset : T::PTRS) {
+    for (auto offset : T::PTRS()) {
       *(PtrT *)((uint8_t *)&data + (PtrT)offset) =
           slideP(address + (PtrT)offset);
     }
@@ -73,8 +74,8 @@ public:
   /// @tparam T The type of data
   /// @param addr The address of the struct
   /// @param data The new targets of the pointers
-  template <class T> void addS(const PtrT addr, const T data) {
-    for (auto offset : T::PTRS) {
+  template <class T> void addS(const PtrT addr, const T &data) {
+    for (auto offset : T::PTRS()) {
       add(addr + (PtrT)offset, *(PtrT *)((uint8_t *)&data + offset));
     }
   }
@@ -83,6 +84,11 @@ public:
   /// @param addr Address of the pointer
   /// @param data The auth data
   void addAuth(const PtrT addr, AuthData data);
+
+  /// @brief Copy and add auth data for a pointer
+  /// @param addr The address of the pointer
+  /// @param sAddr The address of the pointer to copy auth data from
+  void copyAuth(const PtrT addr, const PtrT sAddr);
 
   /// @brief Copy and add auth data for a struct
   /// @tparam T The type of struct
@@ -95,7 +101,7 @@ public:
       if (map.containsAddr(sAddr)) {
         // Copy auth data for each pointer if needed
         auto sLoc = map.convertAddr(sAddr);
-        for (auto offset : T::PTRS) {
+        for (auto offset : T::PTRS()) {
           auto p = (dyld_cache_slide_pointer3 *)(sLoc + offset);
           if (p->auth.authenticated) {
             addAuth(addr + (PtrT)offset,
@@ -107,6 +113,11 @@ public:
       }
     }
   }
+
+  /// @brief Remove pointers from tracking, and all maps
+  /// @param start The first pointer to remove
+  /// @param end The last pointer to remove, exclusive
+  void removePointers(const PtrT start, const PtrT end);
 
   /// @brief Add bind data for a pointer
   /// @param addr The address of the pointer
@@ -123,7 +134,6 @@ public:
 
   const std::map<PtrT, AuthData> &getAuths() const;
 
-  /// @brief Get additional binds, does not contain binds from opcodes.
   const std::map<PtrT, std::shared_ptr<SymbolicInfo>> &getBinds() const;
 
   /// @brief Get the page size.
@@ -133,7 +143,7 @@ private:
   void fillMappings();
 
   const Dyld::Context *dCtx;
-  std::shared_ptr<spdlog::logger> logger;
+  std::optional<std::shared_ptr<spdlog::logger>> logger;
 
   std::vector<MappingSlideInfo> mappings;
   std::vector<int> slideMappings;

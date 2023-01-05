@@ -7,7 +7,9 @@ add_library(DyldExtractor
 	Converter/Linkedit/Encoder/RebaseV1.cpp
 	Converter/Linkedit/MetadataGenerator.cpp
 	Converter/Linkedit/Optimizer.cpp
-	Converter/Objc/ObjcFixer.cpp
+	Converter/Objc/Objc.cpp
+	Converter/Objc/Placer.cpp
+	Converter/Objc/Walker.cpp
 	Converter/Stubs/Arm64Fixer.cpp
 	Converter/Stubs/Arm64Utils.cpp
 	Converter/Stubs/ArmFixer.cpp
@@ -17,14 +19,16 @@ add_library(DyldExtractor
 	Converter/OffsetOptimizer.cpp
 	Converter/Slide.cpp
 	Dyld/Context.cpp
-	Logger/Activity.cpp
 	Macho/Context.cpp
+	Provider/ActivityLogger.cpp
 	Provider/BindInfo.cpp
 	Provider/Disassembler.cpp
 	Provider/ExtraData.cpp
+	Provider/FunctionTracker.cpp
 	Provider/LinkeditTracker.cpp
 	Provider/PointerTracker.cpp
 	Provider/Symbolizer.cpp
+	Provider/SymbolTableTracker.cpp
 	Provider/Validator.cpp
 	Utils/ExtractionContext.cpp
 	Utils/Leb128.cpp

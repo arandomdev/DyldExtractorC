@@ -41,11 +41,13 @@ private:
 
   Fixer<A> &delegate;
   Macho::Context<false, P> &mCtx;
-  Logger::Activity &activity;
+  Provider::ActivityLogger &activity;
   std::shared_ptr<spdlog::logger> logger;
   Provider::BindInfo<P> &bindInfo;
+  Provider::Disassembler<A> &disasm;
   Provider::PointerTracker<P> &ptrTracker;
   Provider::Symbolizer<A> &symbolizer;
+  Provider::SymbolTableTracker<P> &stTracker;
 
   SymbolPointerCache<A> &pointerCache;
   Arm64Utils<A> &arm64Utils;

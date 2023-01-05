@@ -1,11 +1,14 @@
 #ifndef __PROVIDER_DISASSEMBLER__
 #define __PROVIDER_DISASSEMBLER__
 
-#include <Logger/Activity.h>
+#include "ActivityLogger.h"
+#include "FunctionTracker.h"
 #include <Macho/Context.h>
 #include <capstone/capstone.h>
 #include <set>
 #include <spdlog/spdlog.h>
+
+#define DISASM_INVALID_INSN 0
 
 namespace DyldExtractor::Provider {
 
@@ -26,37 +29,54 @@ public:
     Instruction(cs_insn *raw);
   };
 
-  Disassembler(Macho::Context<false, P> *mCtx, Logger::Activity *activity,
-               std::shared_ptr<spdlog::logger> logger);
+  using InstructionCacheT = std::vector<Instruction>;
+  using ConstInstructionIt = InstructionCacheT::const_iterator;
+
+  Disassembler(const Macho::Context<false, P> &mCtx,
+               Provider::ActivityLogger &activity,
+               std::shared_ptr<spdlog::logger> logger,
+               Provider::FunctionTracker<P> &funcTracker);
   ~Disassembler();
   Disassembler(const Disassembler &) = delete;
   Disassembler(Disassembler &&o);
   Disassembler &operator=(const Disassembler &) = delete;
   Disassembler &operator=(Disassembler &&o);
 
-  void disasm();
-
-  std::vector<Instruction> instructions;
+  void load();
+  ConstInstructionIt instructionAtAddr(PtrT addr) const;
+  ConstInstructionIt instructionsBegin() const;
+  ConstInstructionIt instructionsEnd() const;
 
 private:
-  uint32_t disasmNextChunk(uint32_t startOffset, uint32_t endOffset);
+  /// @brief Disassemble an entire function
+  /// @param offset Byte offset from the text seg
+  /// @param size Size of function
+  void disasmFunc(uint32_t offset, uint32_t size);
+
+  /// @brief Disassemble part of a function
+  /// @param offset Byte offset from the text seg
+  /// @param size Size of chunk
+  void disasmChunk(uint32_t offset, uint32_t size);
+
+  /// @brief Recover from failed disassembly
+  /// @return The size of the recovered instruction
   uint32_t recover(uint32_t offset);
-  uint32_t recoverArm(uint32_t offset);
-  uint32_t recoverArm64(uint32_t offset);
 
-  Logger::Activity *activity;
+  const Macho::Context<false, P> *mCtx;
+  Provider::ActivityLogger *activity;
   std::shared_ptr<spdlog::logger> logger;
+  Provider::FunctionTracker<P> *funcTracker;
 
-  uint8_t *textData = nullptr;
-  PtrT textAddr = 0;
-  PtrT textSize = 0;
-  PtrT imageAddr = 0;
+  InstructionCacheT instructions;
+  uint8_t *textData = nullptr; // text segment data
+  PtrT textAddr = 0;           // text segment address
   bool disassembled = false;
-
-  data_in_code_entry *diceStart = nullptr;
-  data_in_code_entry *diceEnd = nullptr;
-
   csh handle;
+
+  static inline auto dataInCodeComp = [](const auto &rhs, const auto &lhs) {
+    return rhs.offset < lhs.offset;
+  };
+  std::set<data_in_code_entry, decltype(dataInCodeComp)> dataInCodeEntries;
 };
 
 } // namespace DyldExtractor::Provider

@@ -11,7 +11,6 @@
 #include <Converter/Slide.h>
 #include <Converter/Stubs/Stubs.h>
 #include <Dyld/Context.h>
-#include <Logger/Activity.h>
 #include <Macho/Context.h>
 #include <Provider/Validator.h>
 #include <Utils/ExtractionContext.h>
@@ -160,17 +159,18 @@ void extractImage(Dyld::Context &dCtx, ProgramArguments args) {
   }
 
   // Setup context and extract
-  Logger::Activity activity("DyldEx", std::cout, true);
-  activity.logger->set_pattern("[%T:%e %-8l %s:%#] %v");
+  Provider::ActivityLogger activity("DyldEx", std::cout, true);
+  auto logger = activity.getLogger();
+  logger->set_pattern("[%T:%e %-8l %s:%#] %v");
   if (args.verbose) {
-    activity.logger->set_level(spdlog::level::trace);
+    logger->set_level(spdlog::level::trace);
   } else {
-    activity.logger->set_level(spdlog::level::info);
+    logger->set_level(spdlog::level::info);
   }
   activity.update("DyldEx", "Starting up");
 
   Provider::Accelerator<P> accelerator;
-  Utils::ExtractionContext<A> eCtx(dCtx, mCtx, activity, accelerator);
+  Utils::ExtractionContext<A> eCtx(dCtx, mCtx, accelerator, activity);
 
   // Process
   if (!args.modulesDisabled.processSlideInfo) {
@@ -192,8 +192,7 @@ void extractImage(Dyld::Context &dCtx, ProgramArguments args) {
   if (args.imbedVersion) {
     if constexpr (!std::is_same_v<P, Utils::Arch::Pointer64>) {
       SPDLOG_LOGGER_ERROR(
-          activity.logger,
-          "Unable to imbed version info in a non 64 bit image.");
+          logger, "Unable to imbed version info in a non 64 bit image.");
     } else {
       mCtx.header->reserved = DYLDEXTRACTORC_VERSION_DATA;
     }
@@ -204,7 +203,7 @@ void extractImage(Dyld::Context &dCtx, ProgramArguments args) {
   fs::create_directories(args.outputPath->parent_path());
   std::ofstream outFile(*args.outputPath, std::ios_base::binary);
   if (!outFile.good()) {
-    SPDLOG_LOGGER_ERROR(activity.logger, "Unable to open output file.");
+    SPDLOG_LOGGER_ERROR(logger, "Unable to open output file.");
     return;
   }
 
@@ -225,9 +224,12 @@ int main(int argc, char *argv[]) {
     Dyld::Context dCtx(args.cache_path);
 
     if (args.listImages) {
+      std::cout << "Index | Path\n------------\n";
       for (auto &[i, path] : getImages(dCtx, args.listFilter)) {
-        std::cout << path << std::endl;
+        std::cout << fmt::format("{:0>5} | {}\n", i, path);
       }
+      std::cout << std::endl;
+
       return 0;
     } else if (args.extractImage) {
       // use dyld's magic to select arch

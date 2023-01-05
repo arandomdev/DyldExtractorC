@@ -1,6 +1,7 @@
 #ifndef __PROVIDER_BINDINFO__
 #define __PROVIDER_BINDINFO__
 
+#include "ActivityLogger.h"
 #include <Macho/Context.h>
 #include <map>
 
@@ -17,44 +18,40 @@ struct BindRecord {
 
 template <class P> class BindInfo {
 public:
-  BindInfo(const Macho::Context<false, P> &mCtx);
+  BindInfo(const Macho::Context<false, P> &mCtx,
+           Provider::ActivityLogger &activity);
   BindInfo(const BindInfo &) = delete;
   BindInfo &operator=(const BindInfo &) = delete;
 
+  /// @brief Read and load all binds
+  void load();
+
   /// @brief Get all regular bind records.
-  const std::vector<BindRecord> &getBinds();
+  const std::vector<BindRecord> &getBinds() const;
 
   /// @brief Get all weak bind records.
-  const std::vector<BindRecord> &getWeakBinds();
+  const std::vector<BindRecord> &getWeakBinds() const;
 
   /// @brief Get all lazy bind records.
-  const std::map<uint32_t, BindRecord> &getLazyBinds();
+  const std::map<uint32_t, BindRecord> &getLazyBinds() const;
 
   /// @brief Get a lazy bind record.
   /// @param offset The offset to the bind record.
   /// @return The bind record.
-  const BindRecord *getLazyBind(uint32_t offset);
+  const BindRecord *getLazyBind(uint32_t offset) const;
 
   bool hasLazyBinds() const;
 
 private:
-  void readBinds();
-  void readWeakBinds();
-  void readLazyBinds();
-
   const Macho::Context<false, P> *mCtx;
-  const uint8_t *linkeditFile;
-  const dyld_info_command *dyldInfo;
+  Provider::ActivityLogger *activity;
 
   std::vector<BindRecord> binds;
   std::vector<BindRecord> weakBinds;
   std::map<uint32_t, BindRecord> lazyBinds;
+  bool _hasLazyBinds;
 
-  struct {
-    bool bind = false;
-    bool weak = false;
-    bool lazy = false;
-  } readStatus;
+  bool dataLoaded = false;
 };
 
 } // namespace DyldExtractor::Provider

@@ -1,6 +1,7 @@
 #include "Chained.h"
 
 #include <Objc/Abstraction.h>
+#include <Utils/Utils.h>
 
 using namespace DyldExtractor;
 using namespace Converter;
@@ -88,10 +89,16 @@ void ChainedFixupBinds::forEachBind(EnumerationCallback callback) {
 
 ChainedEncoder::ChainedEncoder(Utils::ExtractionContext<A> &eCtx)
     : mCtx(*eCtx.mCtx), activity(*eCtx.activity), logger(eCtx.logger),
-      exObjc(eCtx.exObjc), leTracker(eCtx.leTracker),
-      ptrTracker(eCtx.ptrTracker) {}
+      ptrTracker(eCtx.ptrTracker), exObjc(eCtx.exObjc),
+      leTracker(eCtx.leTracker.value()), stTracker(eCtx.stTracker.value()) {}
 
 void ChainedEncoder::generateMetadata() {
+  // Check Extra ObjC
+  if (mCtx.getSegment(SEG_OBJC_EXTRA) && !exObjc) {
+    assert(!"Encountered Extra ObjC segment without extra objc data.");
+    return;
+  }
+
   // create the chained fixup info and Fixup pointers
   buildChainedFixupInfo();
   fixupPointers();
@@ -107,12 +114,11 @@ void ChainedEncoder::generateMetadata() {
   chainedFixupCmd.datasize = chainInfoSize;
 
   auto lastSeg = mCtx.segments.rbegin()->command;
-  Macho::Loader::load_command *pos =
-      reinterpret_cast<Macho::Loader::load_command *>((uint8_t *)lastSeg +
-                                                      lastSeg->cmdsize);
+  auto lcPos = reinterpret_cast<Macho::Loader::load_command *>(
+      (uint8_t *)lastSeg + lastSeg->cmdsize);
   if (!leTracker
-           .insertLC(pos, reinterpret_cast<Macho::Loader::load_command *>(
-                              &chainedFixupCmd))
+           .insertLC(lcPos, reinterpret_cast<Macho::Loader::load_command *>(
+                                &chainedFixupCmd))
            .second) {
     SPDLOG_LOGGER_ERROR(
         logger, "Not enough header space to insert chained fixup info.");
@@ -121,12 +127,8 @@ void ChainedEncoder::generateMetadata() {
 
   // Add data to linkedit, placed in the beginning
   typename Provider::LinkeditTracker<P>::Metadata meta(
-      Provider::LinkeditTracker<P>::Tag::chainedFixups, nullptr, chainInfoSize,
-      (uint8_t *)pos);
-  if (!leTracker
-           .insertData(leTracker.metadataBegin(), meta, chainInfo.data(),
-                       chainInfoSize)
-           .second) {
+      LETrackerTag::chained, nullptr, chainInfoSize, lcPos);
+  if (!leTracker.addData(meta, chainInfo.data(), chainInfoSize).second) {
     SPDLOG_LOGGER_ERROR(
         logger, "Not enough space in linkedit to insert chained fixup info.");
     return;
@@ -149,8 +151,7 @@ void ChainedEncoder::fixupPointers() {
     break;
 
   default:
-    assert(!"Unknown chained pointer format");
-    break;
+    Utils::unreachable();
   }
 }
 
@@ -178,6 +179,11 @@ void ChainedEncoder::buildChainedFixupInfo() {
     auto beginPtrIt = ptrs.lower_bound((PtrT)segCmd->vmaddr);
     auto endPtrIt = ptrs.lower_bound((PtrT)segCmd->vmaddr + segCmd->vmsize);
     for (auto it = beginPtrIt; it != endPtrIt; it++) {
+      if (!it->second && !binds.contains(it->first)) {
+        // Check if the target is null and there is no bind
+        continue;
+      }
+
       uint64_t fixUpAddr = it->first;
 
       uint64_t pageIndex = (fixUpAddr - seg.startAddr) / pageSize;
@@ -199,17 +205,31 @@ void ChainedEncoder::buildChainedFixupInfo() {
       if (!ptrs.contains((PtrT)bindAddr)) {
         SPDLOG_LOGGER_ERROR(
             logger,
-            "Bind pointer at {:X} does not have a corresponding pointer",
+            "Bind pointer at {:#x} does not have a corresponding pointer.",
             bindAddr);
         continue;
       }
 
       const auto &sym = it->second->preferredSymbol();
-      auto atom = &atomMap
-                       .try_emplace(bindAddr, sym.name.c_str(),
-                                    (uint32_t)sym.ordinal, false)
-                       .first->second;
-      chainedFixupBinds.ensureTarget(atom, auths.contains((PtrT)bindAddr), 0);
+      auto [atomIt, inserted] = atomMap.try_emplace(
+          it->second, sym.name.c_str(), (uint32_t)sym.ordinal, false);
+      bindToAtoms.try_emplace(bindAddr, &atomIt->second);
+      if (inserted) {
+        chainedFixupBinds.ensureTarget(&atomIt->second,
+                                       auths.contains((PtrT)bindAddr), 0);
+
+        /// Ghidra markup depends on there being an matching symbol in the
+        /// symtab
+        if (!stTracker.getStrings().contains(sym.name)) {
+          const auto &str = stTracker.addString(sym.name);
+          Macho::Loader::nlist<P> entry{};
+          entry.n_type = 1;
+          SET_LIBRARY_ORDINAL(entry.n_desc, (uint16_t)sym.ordinal);
+          stTracker.addSym(
+              Provider::SymbolTableTracker<P>::SymbolType::external, str,
+              entry);
+        }
+      }
     }
 
     chainedFixupSegments.push_back(seg);
@@ -239,8 +259,7 @@ void ChainedEncoder::buildChainedFixupInfo() {
 }
 
 void padToSize(std::vector<uint8_t> &data, std::size_t size) {
-  auto padSize = Utils::align(data.size(), size) - data.size();
-  data.insert(data.end(), padSize, 0x0);
+  data.resize(Utils::align(data.size(), size));
 }
 
 void appendMem(std::vector<uint8_t> &data, void *mem, std::size_t size) {
@@ -430,7 +449,13 @@ void ChainedEncoder::applyChainedFixups() {
   for (ChainedFixupSegInfo &segInfo : chainedFixupSegments) {
     activity.update();
 
-    uint8_t *segBufferStart = mCtx.convertAddrP(segInfo.startAddr);
+    uint8_t *segBufferStart;
+    if (strcmp(segInfo.name, SEG_OBJC_EXTRA) == 0) {
+      segBufferStart = exObjc->getData();
+    } else {
+      segBufferStart = mCtx.convertAddrP(segInfo.startAddr);
+    }
+
     uint8_t *pageBufferStart = segBufferStart;
     uint32_t pageIndex = 0;
     uint32_t nextOverflowSlot = (uint32_t)segInfo.pages.size();
@@ -479,13 +504,11 @@ void ChainedEncoder::applyChainedFixups() {
       }
       if (!pageInfo.chainOverflows.empty()) {
         uint8_t *chainHeader = NULL;
-        if (auto metaIt = leTracker.findTag(
-                Provider::LinkeditTracker<P>::Tag::chainedFixups);
+        if (auto metaIt = leTracker.findTag(LETrackerTag::chained);
             metaIt != leTracker.metadataEnd()) {
           chainHeader = metaIt->data;
         } else {
-          throw std::invalid_argument(
-              "Chained data was not added to the linkedit.");
+          assert(!"Chained data was not added to the linkedit.");
         }
 
         dyld_chained_fixups_header *header =
@@ -529,15 +552,10 @@ uint16_t ChainedEncoder::chainedPointerFormat() const {
    * arm64e = DYLD_CHAINED_PTR_ARM64E
    */
 
-  if constexpr (std::is_same_v<A, Utils::Arch::arm64>) {
-    if ((mCtx.header->cpusubtype & ~CPU_SUBTYPE_MASK) == CPU_SUBTYPE_ARM64E) {
-      return DYLD_CHAINED_PTR_ARM64E;
-    } else {
-      return DYLD_CHAINED_PTR_64_OFFSET;
-    }
+  if ((mCtx.header->cpusubtype & ~CPU_SUBTYPE_MASK) == CPU_SUBTYPE_ARM64E) {
+    return DYLD_CHAINED_PTR_ARM64E;
   } else {
-    throw std::invalid_argument(
-        "Unknown or unsupported architecture for chained fixups");
+    return DYLD_CHAINED_PTR_64_OFFSET;
   }
 }
 
@@ -557,7 +575,7 @@ void ChainedEncoder::fixup64() {
     uint64_t segAddr = segCmd->vmaddr;
     uint8_t *segData;
     if (strcmp(segCmd->segname, SEG_OBJC_EXTRA) == 0) {
-      segData = exObjc.get<uint8_t>(segCmd->vmaddr);
+      segData = exObjc->getData();
     } else {
       segData = mCtx.convertAddrP(segCmd->vmaddr);
     }
@@ -569,18 +587,25 @@ void ChainedEncoder::fixup64() {
       auto ptrAddr = it->first;
       auto ptrTarget = it->second;
 
-      if (!mCtx.containsAddr(ptrTarget)) {
-        SPDLOG_LOGGER_ERROR(logger,
-                            "Pointer target at {:X} is not within MachO file, "
-                            "re-pointing to mach header.",
-                            ptrAddr);
+      // Check for out of bound pointer
+      if (ptrTarget &&                                     // Not nullptr
+          !binds.contains(ptrAddr) &&                      // Not a bind
+          (!exObjc || ptrTarget < exObjc->getBaseAddr() || // Not in exObjc
+           ptrTarget >= exObjc->getEndAddr()) &&
+          !mCtx.containsAddr(ptrTarget)                    // Not in image
+      ) {
+        SPDLOG_LOGGER_WARN(logger,
+                           "Pointer target at {:#x} -> {:#x} is not within "
+                           "MachO file, re-pointing to mach header.",
+                           ptrAddr, ptrTarget);
         ptrTarget = (PtrT)machHeaderAddr;
       }
 
       auto fixUpLocation = segData + (ptrAddr - segAddr);
 
       if (binds.contains(ptrAddr)) {
-        auto bindOrdinal = chainedFixupBinds.ordinal(&atomMap.at(ptrAddr), 0);
+        auto bindOrdinal =
+            chainedFixupBinds.ordinal(bindToAtoms.at(ptrAddr), 0);
 
         dyld_chained_ptr_64_bind *b = (dyld_chained_ptr_64_bind *)fixUpLocation;
         b->bind = 1;
@@ -591,6 +616,10 @@ void ChainedEncoder::fixup64() {
         b->ordinal = bindOrdinal;
         assert(b->ordinal == bindOrdinal);
       } else {
+        if (!ptrTarget) {
+          continue;
+        }
+
         uint64_t vmOffset = (ptrTarget - machHeaderAddr);
         uint64_t high8 = vmOffset >> 56;
         vmOffset &= 0x00FFFFFFFFFFFFFFULL;
@@ -625,7 +654,7 @@ void ChainedEncoder::fixup64e() {
     uint64_t segAddr = segCmd->vmaddr;
     uint8_t *segData;
     if (strcmp(segCmd->segname, SEG_OBJC_EXTRA) == 0) {
-      segData = exObjc.get<uint8_t>(segCmd->vmaddr);
+      segData = exObjc->getData();
     } else {
       segData = mCtx.convertAddrP(segCmd->vmaddr);
     }
@@ -637,11 +666,18 @@ void ChainedEncoder::fixup64e() {
       auto ptrAddr = it->first;
       auto ptrTarget = it->second;
 
-      if (!mCtx.containsAddr(ptrTarget)) {
-        SPDLOG_LOGGER_ERROR(logger,
-                            "Pointer target at {:X} is not within MachO file,"
-                            "re-pointing to mach header.",
-                            ptrAddr);
+      // Check for out of bound pointer
+      if (ptrTarget &&                                     // Not nullptr
+          !binds.contains(ptrAddr) &&                      // Not a bind
+          (!exObjc || ptrTarget < exObjc->getBaseAddr() || // Not in exObjc
+           ptrTarget >= exObjc->getEndAddr()) &&
+          !mCtx.containsAddr(ptrTarget)                    // Not in image
+      ) {
+        /// TODO: Enable
+        // SPDLOG_LOGGER_WARN(logger,
+        //                    "Pointer target at {:#x} -> {:#x} is not within "
+        //                    "MachO file, re-pointing to mach header.",
+        //                    ptrAddr, ptrTarget);
         ptrTarget = (PtrT)machHeaderAddr;
       }
 
@@ -653,7 +689,8 @@ void ChainedEncoder::fixup64e() {
         auto authData = auths.at(ptrAddr);
 
         if (isBind) {
-          auto bindOrdinal = chainedFixupBinds.ordinal(&atomMap.at(ptrAddr), 0);
+          auto bindOrdinal =
+              chainedFixupBinds.ordinal(bindToAtoms.at(ptrAddr), 0);
 
           dyld_chained_ptr_arm64e_auth_bind *b =
               (dyld_chained_ptr_arm64e_auth_bind *)fixUpLocation;
@@ -667,6 +704,10 @@ void ChainedEncoder::fixup64e() {
           b->ordinal = bindOrdinal;
           assert(b->ordinal == bindOrdinal);
         } else {
+          if (!ptrTarget) {
+            continue;
+          }
+
           dyld_chained_ptr_arm64e_auth_rebase *r =
               (dyld_chained_ptr_arm64e_auth_rebase *)fixUpLocation;
           uint64_t vmOffset = (ptrTarget - machHeaderAddr);
@@ -681,7 +722,8 @@ void ChainedEncoder::fixup64e() {
         }
       } else {
         if (isBind) {
-          auto bindOrdinal = chainedFixupBinds.ordinal(&atomMap.at(ptrAddr), 0);
+          auto bindOrdinal =
+              chainedFixupBinds.ordinal(bindToAtoms.at(ptrAddr), 0);
 
           dyld_chained_ptr_arm64e_bind *b =
               (dyld_chained_ptr_arm64e_bind *)fixUpLocation;
@@ -694,6 +736,10 @@ void ChainedEncoder::fixup64e() {
           b->ordinal = bindOrdinal;
           assert(b->ordinal == bindOrdinal);
         } else {
+          if (!ptrTarget) {
+            continue;
+          }
+
           dyld_chained_ptr_arm64e_rebase *r =
               (dyld_chained_ptr_arm64e_rebase *)fixUpLocation;
           r->auth = 0;

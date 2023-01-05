@@ -147,7 +147,8 @@ Context<ro, P>::convertAddr(uint64_t addr) const {
 }
 
 template <bool ro, class P>
-Context<ro, P>::FileT *Context<ro, P>::convertAddrP(uint64_t addr) const {
+typename Context<ro, P>::FileT *
+Context<ro, P>::convertAddrP(uint64_t addr) const {
   auto [offset, file] = convertAddr(addr);
   return file ? file + offset : nullptr;
 }
@@ -207,6 +208,7 @@ Context<ro, P>::getSection(const char *segName, const char *sectName) const {
 
 template <bool ro, class P>
 bool Context<ro, P>::containsAddr(const uint64_t addr) const {
+  /// TODO: Binary search?
   for (auto &seg : segments) {
     if (addr >= seg.command->vmaddr &&
         addr < seg.command->vmaddr + seg.command->vmsize) {
@@ -246,7 +248,7 @@ Context<ro, P>::_getAllLCs(const uint32_t (&targetCmds)[],
 }
 
 template <bool ro, class P>
-Context<ro, P>::LoadCommandT *
+typename Context<ro, P>::LoadCommandT *
 Context<ro, P>::_getFirstLC(const uint32_t (&targetCmds)[],
                             std::size_t ncmds) const {
   auto matchLoadCommands = [&targetCmds, ncmds](uint32_t cmd) {

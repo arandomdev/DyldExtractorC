@@ -2,14 +2,16 @@
 #define __UTILS_EXTRACTIONCONTEXT__
 
 #include <Dyld/Context.h>
-#include <Logger/Activity.h>
 #include <Macho/Context.h>
 #include <Provider/Accelerator.h>
+#include <Provider/ActivityLogger.h>
 #include <Provider/BindInfo.h>
 #include <Provider/Disassembler.h>
 #include <Provider/ExtraData.h>
+#include <Provider/FunctionTracker.h>
 #include <Provider/LinkeditTracker.h>
 #include <Provider/PointerTracker.h>
+#include <Provider/SymbolTableTracker.h>
 #include <Provider/Symbolizer.h>
 #include <spdlog/logger.h>
 
@@ -21,28 +23,29 @@ template <class A> class ExtractionContext {
 public:
   const Dyld::Context *dCtx;
   Macho::Context<false, P> *mCtx;
-  Logger::Activity *activity;
-  std::shared_ptr<spdlog::logger> logger;
   Provider::Accelerator<P> *accelerator;
+  Provider::ActivityLogger *activity;
+  std::shared_ptr<spdlog::logger> logger;
 
   Provider::BindInfo<P> bindInfo;
-  Provider::Disassembler<A> disassembler;
-  Provider::ExtraData<P> exObjc;
-  Provider::LinkeditTracker<P> leTracker;
+  Provider::Disassembler<A> disasm;
+  Provider::FunctionTracker<P> funcTracker;
   Provider::PointerTracker<P> ptrTracker;
-  Provider::Symbolizer<A> symbolizer;
 
-  // Linkedit optimizer guarantees that undefined symbols are added last in the
-  // symtab.
-  bool hasRedactedIndirect = false;
+  std::optional<Provider::Symbolizer<A>> symbolizer;
+  std::optional<Provider::LinkeditTracker<P>> leTracker;
+  std::optional<Provider::SymbolTableTracker<P>> stTracker;
+  std::optional<Provider::ExtraData<P>> exObjc;
 
   ExtractionContext(const Dyld::Context &dCtx, Macho::Context<false, P> &mCtx,
-                    Logger::Activity &activity,
-                    Provider::Accelerator<P> &accelerator);
+                    Provider::Accelerator<P> &accelerator,
+                    Provider::ActivityLogger &activity);
   ExtractionContext(const ExtractionContext<A> &other) = delete;
   ExtractionContext &operator=(const ExtractionContext<A> &other) = delete;
+  ExtractionContext(ExtractionContext<A> &&other) = delete;
+  ExtractionContext &operator=(ExtractionContext<A> &&other) = delete;
 };
 
-}; // namespace DyldExtractor::Utils
+};     // namespace DyldExtractor::Utils
 
 #endif // __UTILS_EXTRACTIONCONTEXT__

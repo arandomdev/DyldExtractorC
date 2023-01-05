@@ -1,7 +1,7 @@
 #include <Converter/Stubs/Arm64Utils.h>
 #include <Dyld/Context.h>
-#include <Logger/Activity.h>
-#include <Utils/ExtractionContext.h>
+#include <Provider/PointerTracker.h>
+#include <Utils/Utils.h>
 #include <argparse/argparse.hpp>
 #include <filesystem>
 #include <fmt/core.h>
@@ -82,9 +82,7 @@ formatStubFormat(typename Converter::Stubs::Arm64Utils<A>::StubFormat format) {
     break;
 
   default:
-    assert(!"Unreachable");
-    return "";
-    break;
+    Utils::unreachable();
   }
 }
 
@@ -121,12 +119,9 @@ template <class A> void program(Dyld::Context &dCtx, ProgramArguments &args) {
 
   if (args.resolveChain) {
     if constexpr (std::is_same_v<A, Utils::Arch::arm64>) {
-      auto mCtx = dCtx.createMachoCtx<false, typename A::P>(dCtx.images[0]);
-      Logger::Activity activity("dyldex_info", std::cout, false);
       Provider::Accelerator<typename A::P> accelerator;
-      Utils::ExtractionContext<A> eCtx(dCtx, mCtx, activity, accelerator);
-
-      Converter::Stubs::Arm64Utils<A> arm64Utils(eCtx);
+      Provider::PointerTracker<typename A::P> ptrTracker(dCtx);
+      Converter::Stubs::Arm64Utils<A> arm64Utils(dCtx, accelerator, ptrTracker);
 
       auto currentAddr = args.address;
       while (true) {
@@ -146,6 +141,9 @@ template <class A> void program(Dyld::Context &dCtx, ProgramArguments &args) {
           currentAddr = newAddr;
         }
       }
+    } else {
+      std::cerr << "Not implemented for architectures other than arm64."
+                << std::endl;
     }
   }
 }

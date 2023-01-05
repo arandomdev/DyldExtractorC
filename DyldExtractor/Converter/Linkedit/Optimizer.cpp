@@ -1,5 +1,7 @@
 #include "Optimizer.h"
 #include <Provider/LinkeditTracker.h>
+#include <Provider/SymbolTableTracker.h>
+#include <Utils/Utils.h>
 
 #include <map>
 #include <spdlog/spdlog.h>
@@ -8,141 +10,53 @@
 using namespace DyldExtractor;
 using namespace Converter;
 
-#pragma region StringPool
-class StringPool {
-public:
-  StringPool();
-
-  /// @brief Add a string to the string pool.
-  /// @param string The string to add.
-  /// @returns The string index.
-  uint32_t addString(const char *string);
-
-  /// @brief Write strings
-  /// @param dest Buffer to write to. Writes to the end.
-  void writeStrings(std::vector<uint8_t> &buffer);
-
-  /// @brief Get total size of strings
-  uint32_t getSize() const;
-
-private:
-  struct cmpStr {
-    bool operator()(char const *a, char const *b) const {
-      return std::strcmp(a, b) < 0;
-    }
-  };
-  std::map<const char *, uint32_t, cmpStr> _pool;
-
-  uint32_t _stringsLength = 0;
-};
-
-StringPool::StringPool() {
-  // first string is \x00 historically
-  addString("\x00");
-}
-
-uint32_t StringPool::addString(const char *string) {
-  if (_pool.contains(string)) {
-    return _pool.at(string);
-  }
-
-  uint32_t index = _stringsLength;
-
-  _pool[string] = index;
-  _stringsLength += (uint32_t)strlen(string) + 1; // +1 for null terminator
-  return index;
-}
-
-void StringPool::writeStrings(std::vector<uint8_t> &buffer) {
-  // Sort all strings by their offset
-  std::vector<std::pair<uint32_t, const char *>> strings;
-  for (auto const &pair : _pool) {
-    strings.emplace_back(pair.second, pair.first);
-  }
-  std::sort(strings.begin(), strings.end());
-
-  auto oldBufferSize = buffer.size();
-  buffer.reserve(oldBufferSize + _stringsLength);
-
-  // Write first string
-  auto lastIt = std::prev(strings.end());
-  for (auto it = strings.begin(); it != lastIt; it++) {
-    auto &[offset, str] = *it;
-
-    // Calculate string length, includes null terminator
-    auto stringLength = std::next(it)->first - offset;
-    buffer.insert(buffer.end(), str, str + stringLength);
-  }
-
-  // Write last string
-  auto lastString = lastIt->second;
-  auto lastStringLength = _stringsLength - lastIt->first;
-  buffer.insert(buffer.end(), lastString, lastString + lastStringLength);
-
-  assert(oldBufferSize + _stringsLength == buffer.size());
-}
-
-uint32_t StringPool::getSize() const { return _stringsLength; }
-#pragma endregion StringPool
-
 #pragma region LinkeditOptimizer
 template <class A> class LinkeditOptimizer {
   using P = A::P;
   using PtrT = P::PtrT;
   using LETrackerTag = Provider::LinkeditTracker<P>::Tag;
+  using STSymbolType = Provider::SymbolTableTracker<P>::SymbolType;
 
 public:
   LinkeditOptimizer(Utils::ExtractionContext<A> &eCtx);
   void run();
 
 private:
-  void addData(uint8_t *data, uint32_t size, LETrackerTag tag, uint8_t *lc);
-  template <class T> void addStruct(T *data) {
-    uint8_t *dataLoc = reinterpret_cast<uint8_t *>(data);
-    uint32_t size = (uint32_t)sizeof(T);
-    newLeData.insert(newLeData.end(), dataLoc, dataLoc + size);
-    newLeSize += size;
-  }
+  void addData(uint8_t *data, uint32_t size, LETrackerTag tag,
+               Macho::Loader::load_command *lc);
 
   void copyBindingInfo();
   void copyWeakBindingInfo();
   void copyLazyBindingInfo();
   void copyExportInfo();
 
-  void startSymbolEntries();
-  void searchRedactedSymbol();
+  void copyFunctionStarts();
+  void copyDataInCode();
+
   void copyLocalSymbols();
   void copyExportedSymbols();
   void copyImportedSymbols();
-  void endSymbolEntries();
-
-  void copyFunctionStarts();
-  void copyDataInCode();
   void copyIndirectSymbolTable();
-  void copyStringPool();
 
   void commitData();
 
   /// Finds the start of the local symbols and how many there are.
   std::tuple<Macho::Loader::nlist<P> *, Macho::Loader::nlist<P> *>
   findLocalSymbolEntries(dyld_cache_local_symbols_info *symbolsInfo);
-  uint32_t copyPublicLocalSymbols();
-  uint32_t copyRedactedLocalSymbols();
+  void copyPublicLocalSymbols();
+  void copyRedactedLocalSymbols();
 
   Utils::ExtractionContext<A> &eCtx;
   const Dyld::Context &dCtx;
   Macho::Context<false, P> &mCtx;
-  Logger::Activity &activity;
+  Provider::ActivityLogger &activity;
   std::shared_ptr<spdlog::logger> logger;
 
-  std::set<typename Provider::LinkeditTracker<P>::Metadata> trackedData;
+  std::vector<typename Provider::LinkeditTracker<P>::Metadata> trackedData;
 
-  StringPool stringsPool;
-  uint32_t symbolsCount = 0;
-  // offset of new symbols from the start of new linkedit data
-  uint32_t newSymbolEntriesOffset;
-  // map of old symbol indicies to new ones
-  std::map<uint32_t, uint32_t> newSymbolIndicies;
+  Provider::SymbolTableTracker<P> stTracker;
+  // map of old symbol indicies to new ones in the tracker
+  std::map<uint32_t, std::pair<STSymbolType, uint32_t>> newSymbolIndicies;
 
   std::vector<uint8_t> newLeData; // data storage for new linkedit region
   uint32_t newLeSize = 0;         // current size of new linkedit data
@@ -174,31 +88,30 @@ LinkeditOptimizer<A>::LinkeditOptimizer(Utils::ExtractionContext<A> &eCtx)
 }
 
 template <class A> void LinkeditOptimizer<A>::run() {
-  copyBindingInfo();
-  copyWeakBindingInfo();
-  copyLazyBindingInfo();
+  if (dyldInfo) {
+    copyBindingInfo();
+    copyWeakBindingInfo();
+    copyLazyBindingInfo();
+  }
   copyExportInfo();
-
-  startSymbolEntries();
-  searchRedactedSymbol();
-  copyLocalSymbols();
-  copyExportedSymbols();
-  copyImportedSymbols();
-  endSymbolEntries();
 
   copyFunctionStarts();
   copyDataInCode();
+
+  copyLocalSymbols();
+  copyExportedSymbols();
+  copyImportedSymbols();
   copyIndirectSymbolTable();
-  copyStringPool();
 
   commitData();
 }
 
 template <class A>
 void LinkeditOptimizer<A>::addData(uint8_t *data, uint32_t size,
-                                   LETrackerTag tag, uint8_t *lc) {
+                                   LETrackerTag tag,
+                                   Macho::Loader::load_command *lc) {
   auto alignedSize = Utils::align(size, sizeof(PtrT));
-  trackedData.emplace(tag, leData + newLeSize, alignedSize, lc);
+  trackedData.emplace_back(tag, leData + newLeSize, alignedSize, lc);
 
   newLeData.insert(newLeData.end(), data, data + size);
   newLeData.resize(newLeSize + alignedSize);
@@ -206,35 +119,41 @@ void LinkeditOptimizer<A>::addData(uint8_t *data, uint32_t size,
 }
 
 template <class A> void LinkeditOptimizer<A>::copyBindingInfo() {
-  if (!dyldInfo || !dyldInfo->bind_size) {
+  if (!dyldInfo->bind_size) {
+    dyldInfo->bind_off = 0;
     return;
   }
 
   activity.update(std::nullopt, "Copying binding info");
   addData(leFile + dyldInfo->bind_off, dyldInfo->bind_size,
-          LETrackerTag::bindInfo, reinterpret_cast<uint8_t *>(dyldInfo));
+          LETrackerTag::binding,
+          reinterpret_cast<Macho::Loader::load_command *>(dyldInfo));
   activity.update();
 }
 
 template <class A> void LinkeditOptimizer<A>::copyWeakBindingInfo() {
-  if (!dyldInfo || !dyldInfo->weak_bind_size) {
+  if (!dyldInfo->weak_bind_size) {
+    dyldInfo->weak_bind_off = 0;
     return;
   }
 
   activity.update(std::nullopt, "Copying weak binding info");
   addData(leFile + dyldInfo->weak_bind_off, dyldInfo->weak_bind_size,
-          LETrackerTag ::weakBindInfo, reinterpret_cast<uint8_t *>(dyldInfo));
+          LETrackerTag::weakBinding,
+          reinterpret_cast<Macho::Loader::load_command *>(dyldInfo));
   activity.update();
 }
 
 template <class A> void LinkeditOptimizer<A>::copyLazyBindingInfo() {
-  if (!dyldInfo || !dyldInfo->lazy_bind_size) {
+  if (!dyldInfo->lazy_bind_size) {
+    dyldInfo->lazy_bind_off = 0;
     return;
   }
 
   activity.update(std::nullopt, "Copying lazy binding info");
   addData(leFile + dyldInfo->lazy_bind_off, dyldInfo->lazy_bind_size,
-          LETrackerTag ::lazyBindInfo, reinterpret_cast<uint8_t *>(dyldInfo));
+          LETrackerTag::lazyBinding,
+          reinterpret_cast<Macho::Loader::load_command *>(dyldInfo));
   activity.update();
 }
 
@@ -246,22 +165,18 @@ template <class A> void LinkeditOptimizer<A>::copyExportInfo() {
   uint8_t *data;
   uint32_t size;
   LETrackerTag tag;
-  uint8_t *lc;
+  Macho::Loader::load_command *lc;
 
   if (exportTrie) {
     data = leFile + exportTrie->dataoff;
     size = exportTrie->datasize;
-    tag = LETrackerTag::exportTrie;
-    lc = reinterpret_cast<uint8_t *>(exportTrie);
+    tag = LETrackerTag::detachedExportTrie;
+    lc = reinterpret_cast<Macho::Loader::load_command *>(exportTrie);
   } else {
     data = leFile + dyldInfo->export_off;
     size = dyldInfo->export_size;
-    tag = LETrackerTag::exportInfo;
-    lc = reinterpret_cast<uint8_t *>(dyldInfo);
-  }
-
-  if (!size) {
-    return;
+    tag = LETrackerTag::exportTrie;
+    lc = reinterpret_cast<Macho::Loader::load_command *>(dyldInfo);
   }
 
   activity.update(std::nullopt, "Copying export info");
@@ -269,53 +184,45 @@ template <class A> void LinkeditOptimizer<A>::copyExportInfo() {
   activity.update();
 }
 
-template <class A> void LinkeditOptimizer<A>::startSymbolEntries() {
-  newSymbolEntriesOffset = newLeSize;
-}
-
-template <class A> void LinkeditOptimizer<A>::searchRedactedSymbol() {
-  activity.update(std::nullopt, "Searching for redacted symbols");
-
-  uint8_t *indirectSymStart = leFile + dysymtab->indirectsymoff;
-  for (std::size_t i = 0; i < dysymtab->nindirectsyms; i++) {
-    auto symbolIndex = (uint32_t *)(indirectSymStart + i * sizeof(uint32_t));
-    if (isRedactedIndirect(*symbolIndex)) {
-      eCtx.hasRedactedIndirect = true;
-      break;
-    }
+template <class A> void LinkeditOptimizer<A>::copyFunctionStarts() {
+  auto functionStarts = mCtx.getFirstLC<Macho::Loader::linkedit_data_command>(
+      {LC_FUNCTION_STARTS});
+  if (!functionStarts) {
+    return;
   }
 
-  // Add a redacted symbol so that redacted symbols don't show a random one
-  auto strIndex = stringsPool.addString("<redacted>");
-  symbolsCount++;
+  activity.update(std::nullopt, "Copying function starts");
+  addData(leFile + functionStarts->dataoff, functionStarts->datasize,
+          LETrackerTag::functionStarts,
+          reinterpret_cast<Macho::Loader::load_command *>(functionStarts));
+  activity.update();
+}
 
-  Macho::Loader::nlist<P> symbolEntry = {0};
-  symbolEntry.n_un.n_strx = strIndex;
-  symbolEntry.n_type = 1;
-  addStruct(&symbolEntry);
+template <class A> void LinkeditOptimizer<A>::copyDataInCode() {
+  auto dataInCode =
+      mCtx.getFirstLC<Macho::Loader::linkedit_data_command>({LC_DATA_IN_CODE});
+  if (!dataInCode) {
+    return;
+  }
+
+  // Most data in code is zero sized but still track it
+  activity.update(std::nullopt, "Copying data in code");
+  addData(leFile + dataInCode->dataoff, dataInCode->datasize,
+          LETrackerTag::dataInCode,
+          reinterpret_cast<Macho::Loader::load_command *>(dataInCode));
+  activity.update();
 }
 
 template <class A> void LinkeditOptimizer<A>::copyLocalSymbols() {
-  activity.update(std::nullopt, "Copying local symbols");
+  activity.update(std::nullopt, "Finding local symbols");
 
-  uint32_t newLocalSymbolsStartIndex = symbolsCount;
-  uint32_t newSymsCount = copyPublicLocalSymbols();
-  newSymsCount += copyRedactedLocalSymbols();
-
-  if (newSymsCount) {
-    dysymtab->ilocalsym = newLocalSymbolsStartIndex;
-    dysymtab->nlocalsym = newSymsCount;
-  } else {
-    dysymtab->ilocalsym = 0;
-    dysymtab->nlocalsym = 0;
-  }
+  copyPublicLocalSymbols();
+  copyRedactedLocalSymbols();
 }
 
 template <class A> void LinkeditOptimizer<A>::copyExportedSymbols() {
-  activity.update(std::nullopt, "Copying exported symbols");
+  activity.update(std::nullopt, "Finding exported symbols");
 
-  uint32_t newExportedSymbolsStartIndex = symbolsCount;
-  uint32_t newExportedSymbolsCount = 0;
   auto syms = (Macho::Loader::nlist<P> *)(leFile + symtab->symoff);
   uint32_t symsStart = dysymtab->iextdefsym;
   uint32_t symsEnd = symsStart + dysymtab->nextdefsym;
@@ -325,31 +232,17 @@ template <class A> void LinkeditOptimizer<A>::copyExportedSymbols() {
     auto symEntry = syms + symIndex;
     const char *string = (const char *)stringsStart + symEntry->n_un.n_strx;
 
-    Macho::Loader::nlist<P> newEntry = *symEntry;
-    newEntry.n_un.n_strx = stringsPool.addString(string);
-    addStruct(&newEntry);
+    auto &str = stTracker.addString(string);
+    auto newSymIndex = stTracker.addSym(STSymbolType::external, str, *symEntry);
 
-    newSymbolIndicies[symIndex] = symbolsCount;
-
-    newExportedSymbolsCount++;
-    symbolsCount++;
+    newSymbolIndicies[symIndex] = newSymIndex;
     activity.update();
-  }
-
-  if (newExportedSymbolsCount) {
-    dysymtab->iextdefsym = newExportedSymbolsStartIndex;
-    dysymtab->nextdefsym = newExportedSymbolsCount;
-  } else {
-    dysymtab->iextdefsym = 0;
-    dysymtab->nextdefsym = 0;
   }
 }
 
 template <class A> void LinkeditOptimizer<A>::copyImportedSymbols() {
-  activity.update(std::nullopt, "Copying imported symbols");
+  activity.update(std::nullopt, "Finding imported symbols");
 
-  uint32_t newImportedSymbolsStartIndex = symbolsCount;
-  uint32_t newImportedSymbolsCount = 0;
   auto syms = (Macho::Loader::nlist<P> *)(leFile + symtab->symoff);
   uint32_t symsStart = dysymtab->iundefsym;
   uint32_t symsEnd = symsStart + dysymtab->nundefsym;
@@ -359,115 +252,29 @@ template <class A> void LinkeditOptimizer<A>::copyImportedSymbols() {
     auto symEntry = syms + symIndex;
     const char *string = (const char *)stringsStart + symEntry->n_un.n_strx;
 
-    Macho::Loader::nlist<P> newEntry = *symEntry;
-    newEntry.n_un.n_strx = stringsPool.addString(string);
-    addStruct(&newEntry);
+    auto &str = stTracker.addString(string);
+    auto newSymIndex =
+        stTracker.addSym(STSymbolType::undefined, str, *symEntry);
 
-    newSymbolIndicies[symIndex] = symbolsCount;
-
-    newImportedSymbolsCount++;
-    symbolsCount++;
+    newSymbolIndicies[symIndex] = newSymIndex;
     activity.update();
   }
-
-  if (newImportedSymbolsCount) {
-    dysymtab->iundefsym = newImportedSymbolsStartIndex;
-    dysymtab->nundefsym = newImportedSymbolsCount;
-  } else {
-    dysymtab->iundefsym = 0;
-    dysymtab->nundefsym = 0;
-  }
-}
-
-template <class A> void LinkeditOptimizer<A>::endSymbolEntries() {
-  auto symEntrySize = (uint32_t)(newLeSize - newSymbolEntriesOffset);
-  if (!symEntrySize) {
-    SPDLOG_LOGGER_WARN(logger, "No symbol entries were added");
-    return;
-  }
-  symtab->nsyms = symbolsCount;
-
-  trackedData.emplace(LETrackerTag::symbolEntries,
-                      leData + newSymbolEntriesOffset,
-                      Utils::align(symEntrySize, sizeof(PtrT)),
-                      reinterpret_cast<uint8_t *>(symtab));
-
-  // pointer align
-  Utils::align(&newLeSize, sizeof(PtrT));
-  newLeData.resize(newLeSize);
-}
-
-template <class A> void LinkeditOptimizer<A>::copyFunctionStarts() {
-  auto functionStarts = mCtx.getFirstLC<Macho::Loader::linkedit_data_command>(
-      {LC_FUNCTION_STARTS});
-  if (!functionStarts || !functionStarts->datasize) {
-    return;
-  }
-
-  activity.update(std::nullopt, "Copying function starts");
-  addData(leFile + functionStarts->dataoff, functionStarts->datasize,
-          LETrackerTag::functionStarts,
-          reinterpret_cast<uint8_t *>(functionStarts));
-  activity.update();
-}
-
-template <class A> void LinkeditOptimizer<A>::copyDataInCode() {
-  auto dataInCode =
-      mCtx.getFirstLC<Macho::Loader::linkedit_data_command>({LC_DATA_IN_CODE});
-  if (!dataInCode || !dataInCode->datasize) {
-    return;
-  }
-
-  activity.update(std::nullopt, "Copying data in code");
-  addData(leFile + dataInCode->dataoff, dataInCode->datasize,
-          LETrackerTag::dataInCode, reinterpret_cast<uint8_t *>(dataInCode));
-  activity.update();
 }
 
 template <class A> void LinkeditOptimizer<A>::copyIndirectSymbolTable() {
   activity.update(std::nullopt, "Copying indirect symbol table");
 
-  std::vector<uint32_t> newEntries;
-  newEntries.reserve(dysymtab->nindirectsyms);
-
   auto entries = (uint32_t *)(leFile + dysymtab->indirectsymoff);
-  for (uint32_t entryIndex = 0; entryIndex < dysymtab->nindirectsyms;
-       entryIndex++) {
-    uint32_t *entry = entries + entryIndex;
+  for (uint32_t entryI = 0; entryI < dysymtab->nindirectsyms; entryI++) {
+    uint32_t *entry = entries + entryI;
     if (isRedactedIndirect(*entry)) {
-      // just copy entry
-      newEntries.push_back(*entry);
-      continue;
+      stTracker.indirectSyms.push_back(stTracker.getOrMakeRedactedSymIndex());
+    } else {
+      stTracker.indirectSyms.push_back(newSymbolIndicies[*entry]);
     }
 
-    newEntries.push_back(newSymbolIndicies[*entry]);
     activity.update();
   }
-
-  uint32_t size = (uint32_t)newEntries.size() * sizeof(uint32_t);
-  if (!size) {
-    return;
-  }
-
-  addData((uint8_t *)newEntries.data(), size, LETrackerTag::indirectSymtab,
-          reinterpret_cast<uint8_t *>(dysymtab));
-}
-
-template <class A> void LinkeditOptimizer<A>::copyStringPool() {
-  activity.update(std::nullopt, "Copying string pool");
-
-  auto newSize = stringsPool.getSize();
-  stringsPool.writeStrings(newLeData);
-  symtab->strsize = newSize;
-
-  // Add metadata
-  auto alignedSize = Utils::align(newSize, sizeof(PtrT));
-  trackedData.emplace(LETrackerTag::stringPool, leData + newLeSize, alignedSize,
-                      reinterpret_cast<uint8_t *>(symtab));
-  newLeData.resize(newLeSize + alignedSize);
-  newLeSize = (uint32_t)newLeData.size();
-
-  activity.update();
 }
 
 template <class A> void LinkeditOptimizer<A>::commitData() {
@@ -476,12 +283,23 @@ template <class A> void LinkeditOptimizer<A>::commitData() {
 
   // add metadata to tracking, use original linkedit size
   auto linkeditSeg = mCtx.getSegment(SEG_LINKEDIT)->command;
-  eCtx.leTracker =
-      Provider::LinkeditTracker<A::P>(mCtx, linkeditSeg->filesize, trackedData);
+  eCtx.leTracker.emplace(mCtx, linkeditSeg->filesize, trackedData);
 
   // update segment with new size
   linkeditSeg->vmsize = newLeSize;
   linkeditSeg->filesize = newLeSize;
+
+  // Zero out symtab and dysymtab, create string table tracker
+  *symtab = {0};
+  symtab->cmd = LC_SYMTAB;
+  symtab->cmdsize = sizeof(Macho::Loader::symtab_command);
+  *dysymtab = {0};
+  dysymtab->cmd = LC_DYSYMTAB;
+  dysymtab->cmdsize = sizeof(Macho::Loader::dysymtab_command);
+
+  eCtx.stTracker = std::move(stTracker);
+  eCtx.symbolizer.emplace(*eCtx.dCtx, *eCtx.mCtx, *eCtx.accelerator, activity,
+                          logger, *eCtx.stTracker);
 }
 
 template <class A>
@@ -539,12 +357,11 @@ LinkeditOptimizer<A>::findLocalSymbolEntries(
                          (Macho::Loader::nlist<P> *)nlistStart + nlistCount);
 }
 
-template <class A> uint32_t LinkeditOptimizer<A>::copyPublicLocalSymbols() {
+template <class A> void LinkeditOptimizer<A>::copyPublicLocalSymbols() {
   if (!dysymtab->nlocalsym) {
-    return 0;
+    return;
   }
 
-  uint32_t newLocalSymbolsCount = 0;
   auto strings = (const char *)leFile + symtab->stroff;
   auto symsStart = (Macho::Loader::nlist<P> *)(leFile + symtab->symoff) +
                    dysymtab->ilocalsym;
@@ -556,22 +373,18 @@ template <class A> uint32_t LinkeditOptimizer<A>::copyPublicLocalSymbols() {
       continue;
     }
 
-    Macho::Loader::nlist<P> newEntry = *entry;
-    newEntry.n_un.n_strx = stringsPool.addString(string);
-    addStruct(&newEntry);
+    // Local symbol indices are not tracked for indirect symbols
+    auto &str = stTracker.addString(string);
+    stTracker.addSym(STSymbolType::local, str, *entry);
 
-    newLocalSymbolsCount++;
-    symbolsCount++;
     activity.update();
   }
-
-  return newLocalSymbolsCount;
 }
 
-template <class A> uint32_t LinkeditOptimizer<A>::copyRedactedLocalSymbols() {
+template <class A> void LinkeditOptimizer<A>::copyRedactedLocalSymbols() {
   auto symbolsCache = dCtx.getSymbolsCache();
   if (!symbolsCache || !symbolsCache->header->localSymbolsOffset) {
-    return 0;
+    return;
   }
 
   auto localSymsInfo =
@@ -582,21 +395,16 @@ template <class A> uint32_t LinkeditOptimizer<A>::copyRedactedLocalSymbols() {
     SPDLOG_LOGGER_ERROR(logger, "Unable to copy redacted local symbols.");
   }
 
-  uint32_t newLocalSymbolsCount = 0;
   auto stringsStart = (uint8_t *)localSymsInfo + localSymsInfo->stringsOffset;
   for (auto symEntry = symsStart; symEntry < symsEnd; symEntry++) {
     const char *string = (const char *)stringsStart + symEntry->n_un.n_strx;
 
-    Macho::Loader::nlist<P> newEntry = *symEntry;
-    newEntry.n_un.n_strx = stringsPool.addString(string);
-    addStruct(&newEntry);
+    // Local symbol indices are not tracked for indirect symbols
+    auto &str = stTracker.addString(string);
+    stTracker.addSym(STSymbolType::local, str, *symEntry);
 
-    newLocalSymbolsCount++;
-    symbolsCount++;
     activity.update();
   }
-
-  return newLocalSymbolsCount;
 }
 
 #pragma endregion LinkeditOptimizer
@@ -609,7 +417,7 @@ template <class A> void checkLoadCommands(Utils::ExtractionContext<A> &eCtx) {
     case LC_SEGMENT_64: // segment_command_64
     case LC_IDFVMLIB:   // fvmlib_command
     case LC_LOADFVMLIB:
-    case LC_ID_DYLIB: // dylib_command
+    case LC_ID_DYLIB:   // dylib_command
     case LC_LOAD_DYLIB:
     case LC_LOAD_WEAK_DYLIB:
     case LC_REEXPORT_DYLIB:
@@ -623,7 +431,7 @@ template <class A> void checkLoadCommands(Utils::ExtractionContext<A> &eCtx) {
     case LC_ID_DYLINKER:    // dylinker_command
     case LC_LOAD_DYLINKER:
     case LC_DYLD_ENVIRONMENT:
-    case LC_THREAD: // thread_command
+    case LC_THREAD:             // thread_command
     case LC_UNIXTHREAD:
     case LC_ROUTINES:           // routines_command
     case LC_ROUTINES_64:        // routines_command_64
@@ -646,8 +454,34 @@ template <class A> void checkLoadCommands(Utils::ExtractionContext<A> &eCtx) {
       /* Don't contain any data in the linkedit */
       break;
 
+    case LC_DYSYMTAB: {
+      // Check deprecated fields
+      auto dysymtab = (Macho::Loader::dysymtab_command *)lc;
+      if (dysymtab->ntoc) {
+        SPDLOG_LOGGER_WARN(eCtx.logger,
+                           "Dysymtab's table of contents not processed.");
+      }
+      if (dysymtab->nmodtab) {
+        SPDLOG_LOGGER_WARN(eCtx.logger,
+                           "Dysymtab's module table not processed.");
+      }
+      if (dysymtab->nextrefsyms) {
+        SPDLOG_LOGGER_WARN(eCtx.logger,
+                           "Dysymtab's referenced symbol table not processed.");
+      }
+      if (dysymtab->nextrel) {
+        SPDLOG_LOGGER_WARN(
+            eCtx.logger,
+            "Dysymtab's external relocation entries not processed.");
+      }
+      if (dysymtab->nlocrel) {
+        SPDLOG_LOGGER_WARN(
+            eCtx.logger, "Dysymtab's local relocation entries not processed.");
+      }
+      break;
+    }
+
     case LC_SYMTAB:            // symtab_command
-    case LC_DYSYMTAB:          // dysymtab_command
     case LC_DYLD_EXPORTS_TRIE: // linkedit_data_command
     case LC_FUNCTION_STARTS:
     case LC_DATA_IN_CODE:

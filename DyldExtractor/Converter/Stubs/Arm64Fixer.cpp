@@ -1,6 +1,7 @@
 #include "Arm64Fixer.h"
 
 #include "Fixer.h"
+#include <Utils/Utils.h>
 
 using namespace DyldExtractor;
 using namespace Converter;
@@ -10,8 +11,10 @@ template <class A>
 Arm64Fixer<A>::Arm64Fixer(Fixer<A> &delegate)
     : delegate(delegate), mCtx(delegate.mCtx), activity(delegate.activity),
       logger(delegate.logger), bindInfo(delegate.bindInfo),
-      ptrTracker(delegate.ptrTracker), symbolizer(delegate.symbolizer),
-      pointerCache(delegate.pointerCache), arm64Utils(*delegate.arm64Utils) {}
+      disasm(delegate.disasm), ptrTracker(delegate.ptrTracker),
+      symbolizer(delegate.symbolizer),
+      stTracker(delegate.eCtx.stTracker.value()),
+      pointerCache(delegate.ptrCache), arm64Utils(*delegate.arm64Utils) {}
 
 template <class A> void Arm64Fixer<A>::fix() {
   fixStubHelpers();
@@ -79,7 +82,7 @@ template <class A> void Arm64Fixer<A>::fixStubHelpers() {
       continue;
     }
 
-    SPDLOG_LOGGER_ERROR(logger, "Unknown stub helper format at 0x{:x}",
+    SPDLOG_LOGGER_ERROR(logger, "Unknown stub helper format at 0x{:x}.",
                         helperAddr);
     helperAddr += REG_HELPER_SIZE; // Try to recover, will probably fail
   }
@@ -104,7 +107,7 @@ template <class A> void Arm64Fixer<A>::scanStubs() {
 
           const auto sDataPair = arm64Utils.resolveStub(sAddr);
           if (!sDataPair) {
-            SPDLOG_LOGGER_ERROR(logger, "Unknown Arm64 stub format at {:#x}",
+            SPDLOG_LOGGER_ERROR(logger, "Unknown Arm64 stub format at {:#x}.",
                                 sAddr);
             continue;
           }
@@ -114,11 +117,15 @@ template <class A> void Arm64Fixer<A>::scanStubs() {
           std::set<Provider::SymbolicInfo::Symbol> symbols;
 
           // Though indirect entries
-          if (const auto [entry, string] =
-                  delegate.lookupIndirectEntry(indirectI);
-              entry) {
-            uint64_t ordinal = GET_LIBRARY_ORDINAL(entry->n_desc);
-            symbols.insert({std::string(string), ordinal, std::nullopt});
+          if (indirectI >= stTracker.indirectSyms.size()) {
+            SPDLOG_LOGGER_WARN(logger,
+                               "Unable to symbolize stub via indirect symbols "
+                               "as the index overruns the entries.");
+          } else {
+            const auto &[strIt, entry] =
+                stTracker.getSymbol(stTracker.indirectSyms.at(indirectI));
+            uint64_t ordinal = GET_LIBRARY_ORDINAL(entry.n_desc);
+            symbols.insert({*strIt, ordinal, std::nullopt});
           }
 
           // Though its pointer if not optimized
@@ -156,7 +163,7 @@ template <class A> void Arm64Fixer<A>::scanStubs() {
             brokenStubs.emplace_back(sFormat, sTargetFunc, sAddr, sLoc,
                                      stubSize);
           } else {
-            SPDLOG_LOGGER_WARN(logger, "Unable to symbolize stub at {:#x}",
+            SPDLOG_LOGGER_WARN(logger, "Unable to symbolize stub at {:#x}.",
                                sAddr);
           }
         }
@@ -283,8 +290,7 @@ template <class A> void Arm64Fixer<A>::fixPass1() {
     }
 
     default:
-      assert(!"Unknown stub format");
-      break;
+      Utils::unreachable();
     }
 
     if (fixed) {
@@ -363,7 +369,7 @@ template <class A> void Arm64Fixer<A>::fixPass2() {
       }
 
       if (!pAddr) {
-        SPDLOG_LOGGER_WARN(logger, "Unable to fix optimized stub at {:#x}",
+        SPDLOG_LOGGER_WARN(logger, "Unable to fix optimized stub at {:#x}.",
                            sAddr);
         break;
       }
@@ -398,8 +404,8 @@ template <class A> void Arm64Fixer<A>::fixPass2() {
       }
 
       if (!pAddr) {
-        SPDLOG_LOGGER_WARN(logger, "Unable to fix optimized auth stub at {:#x}",
-                           sAddr);
+        SPDLOG_LOGGER_WARN(
+            logger, "Unable to fix optimized auth stub at {:#x}.", sAddr);
         break;
       }
 
@@ -411,19 +417,18 @@ template <class A> void Arm64Fixer<A>::fixPass2() {
     }
 
     case AStubFormat::AuthStubResolver: {
-      SPDLOG_LOGGER_ERROR(logger, "Unable to fix auth stub resolver at {:#x}",
+      SPDLOG_LOGGER_ERROR(logger, "Unable to fix auth stub resolver at {:#x}.",
                           sAddr);
     }
 
     case AStubFormat::Resolver: {
-      SPDLOG_LOGGER_ERROR(logger, "Unable to fix stub resolver at {:#x}",
+      SPDLOG_LOGGER_ERROR(logger, "Unable to fix stub resolver at {:#x}.",
                           sAddr);
       break;
     }
 
     default:
-      assert(!"Unknown stub format");
-      break;
+      Utils::unreachable();
     }
   }
 }
@@ -476,16 +481,37 @@ template <class A> void Arm64Fixer<A>::fixCallsites() {
       }
     }
 
-    if (!names) {
+    // Try to fix stub
+    bool stubFixed = false;
+    if (names) {
+      for (const auto &name : names->symbols) {
+        if (reverseStubMap.contains(name.name)) {
+          const auto stubAddr = *reverseStubMap[name.name].begin();
+          const auto imm26 = ((SPtrT)stubAddr - iAddr) >> 2;
+          *brInstr = (*brInstr & 0xFC000000) | (uint32_t)imm26;
+          stubFixed = true;
+          break;
+        }
+      }
+
+      if (stubFixed) {
+        activity.update();
+        continue;
+      }
+    }
+
+    if (!stubFixed) {
       /**
        * Sometimes there are bytes of data in the text section
        * that match the bl and b filter, these seem to follow a
        * BR or other branch, skip these.
        */
-      const auto lastInstrTop = *(iLoc - 1) & 0xFC;
-      if (lastInstrTop == 0x94 || lastInstrTop == 0x14 ||
-          lastInstrTop == 0xD4) {
-        continue;
+      if (iAddr != textSect->addr) {
+        const auto lastInstrTop = *(iLoc - 1) & 0xFC;
+        if (lastInstrTop == 0x94 || lastInstrTop == 0x14 ||
+            lastInstrTop == 0xD4) {
+          continue;
+        }
       }
 
       if (brTarget == brTargetFunc) {
@@ -493,36 +519,48 @@ template <class A> void Arm64Fixer<A>::fixCallsites() {
         continue;
       }
 
+      // Check if it's pointing to code
       if (!delegate.isInCodeRegions(brTargetFunc)) {
         continue;
       }
 
-      SPDLOG_LOGGER_WARN(logger,
-                         "Unable to symbolize branch at {:#x} with target "
-                         "{:#x} and destination {:#x}",
-                         iAddr, brTarget, brTargetFunc);
-      continue;
-    }
+      // It might be in a non code region, check if the previous instructions
+      // are invalid
+      auto inst = disasm.instructionAtAddr(iAddr);
+      if (inst == disasm.instructionsEnd()) {
+        continue;
+      }
 
-    // Try to find a stub
-    bool fixed = false;
-    for (const auto &name : names->symbols) {
-      if (reverseStubMap.contains(name.name)) {
-        const auto stubAddr = *reverseStubMap[name.name].begin();
-        const auto imm26 = ((SPtrT)stubAddr - iAddr) >> 2;
-        *brInstr = (*brInstr & 0xFC000000) | (uint32_t)imm26;
-        fixed = true;
-        break;
+      bool invalidInst = false;
+      for (int i = 0; inst != disasm.instructionsBegin() && i <= 2;
+           inst--, i++) {
+        if (inst->id == DISASM_INVALID_INSN) {
+          invalidInst = true;
+          break;
+        }
+      }
+      if (invalidInst) {
+        continue;
       }
     }
-    if (fixed) {
-      activity.update();
-      continue;
+
+    if (!names) {
+      SPDLOG_LOGGER_WARN(logger,
+                         "Unable to symbolize branch at {:#x} with target "
+                         "{:#x} and destination {:#x}.",
+                         iAddr, brTarget, brTargetFunc);
     } else {
+      const auto &symbols = names->symbols;
+      std::string symbolNames;
+      for (auto it = symbols.cbegin(); it != std::prev(symbols.cend()); it++) {
+        symbolNames += it->name + ", ";
+      }
+      symbolNames += symbols.crbegin()->name;
+
       SPDLOG_LOGGER_WARN(logger,
                          "Unable to find stub for branch at {:#x}, with target "
                          "{:#x}, with symbols {}.",
-                         iAddr, brTarget, fmt::join(names->symbols, ", "));
+                         iAddr, brTarget, symbolNames);
     }
   }
 }

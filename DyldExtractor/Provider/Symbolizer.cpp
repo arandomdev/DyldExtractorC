@@ -76,14 +76,13 @@ const SymbolicInfo::Symbol &SymbolicInfo::preferredSymbol() const {
 template <class A>
 Symbolizer<A>::Symbolizer(const Dyld::Context &dCtx,
                           Macho::Context<false, P> &mCtx,
-                          Logger::Activity &activity,
+                          Provider::Accelerator<P> &accelerator,
+                          Provider::ActivityLogger &activity,
                           std::shared_ptr<spdlog::logger> logger,
-                          Provider::Accelerator<P> &accelerator)
-    : dCtx(&dCtx), mCtx(&mCtx), activity(&activity), logger(logger),
-      accelerator(&accelerator) {}
-
-template <class A> void Symbolizer<A>::enumerate() {
-  activity->update(std::nullopt, "Enumerating Symbols");
+                          const Provider::SymbolTableTracker<P> &stTracker)
+    : dCtx(&dCtx), mCtx(&mCtx), accelerator(&accelerator), activity(&activity),
+      logger(logger), stTracker(&stTracker) {
+  activity.update(std::nullopt, "Enumerating Symbols");
   enumerateExports();
   enumerateSymbols();
 }
@@ -118,6 +117,8 @@ template <class A> void Symbolizer<A>::enumerateExports() {
   // Process all dylibs including itself.
   auto dylibs = mCtx->getAllLCs<Macho::Loader::dylib_command>();
   for (uint64_t i = 0; i < dylibs.size(); i++) {
+    activity->update();
+
     const auto &exports = processDylibCmd(dylibs[i]);
     for (const auto &e : exports) {
       PtrT addr = e.address & -4;
@@ -142,40 +143,43 @@ template <class A> void Symbolizer<A>::enumerateExports() {
 }
 
 template <class A> void Symbolizer<A>::enumerateSymbols() {
-  auto linkeditFile =
-      mCtx->convertAddr(mCtx->getSegment(SEG_LINKEDIT)->command->vmaddr).second;
-  auto symtab = mCtx->getFirstLC<Macho::Loader::symtab_command>();
-  auto symbolEntries =
-      (Macho::Loader::nlist<P> *)(linkeditFile + symtab->symoff);
-  auto strings = (char *)(linkeditFile + symtab->stroff);
+  const auto symCaches = stTracker->getSymbolCaches();
+  processSymbolCache(symCaches.other);
+  processSymbolCache(symCaches.external);
+}
 
-  for (uint32_t i = 0; i < symtab->nsyms; i++) {
-    auto symbol = symbolEntries + i;
-    if ((symbol->n_type & N_TYPE) == N_SECT) {
-      auto addr = symbol->n_value;
-      if (symbols.contains(addr)) {
-        symbols.at(addr)->addSymbol({strings + symbol->n_un.n_strx,
-                                     SELF_LIBRARY_ORDINAL, std::nullopt});
-      } else {
-        SymbolicInfo::Encoding enc;
-        if constexpr (std::is_same_v<A, Utils::Arch::arm>) {
-          enc = static_cast<SymbolicInfo::Encoding>(addr & 3);
-        } else {
-          enc = SymbolicInfo::Encoding::None;
-        }
-
-        symbols.emplace(
-            addr, std::make_shared<SymbolicInfo>(
-                      SymbolicInfo::Symbol{strings + symbol->n_un.n_strx,
-                                           SELF_LIBRARY_ORDINAL, std::nullopt},
-                      enc));
-      }
+template <class A>
+void Symbolizer<A>::processSymbolCache(
+    const typename Provider::SymbolTableTracker<P>::SymbolCaches::SymbolCacheT
+        &symCache) {
+  for (const auto &[strIt, sym] : symCache) {
+    if ((sym.n_type & N_TYPE) != N_SECT) {
+      continue;
     }
+
+    auto addr = sym.n_value;
+    if (symbols.contains(addr)) {
+      symbols.at(addr)->addSymbol({*strIt, SELF_LIBRARY_ORDINAL, std::nullopt});
+    } else {
+      SymbolicInfo::Encoding enc;
+      if constexpr (std::is_same_v<A, Utils::Arch::arm>) {
+        enc = static_cast<SymbolicInfo::Encoding>(addr & 3);
+      } else {
+        enc = SymbolicInfo::Encoding::None;
+      }
+
+      symbols.emplace(addr, std::make_shared<SymbolicInfo>(
+                                SymbolicInfo::Symbol{
+                                    *strIt, SELF_LIBRARY_ORDINAL, std::nullopt},
+                                enc));
+    }
+
+    activity->update();
   }
 }
 
 template <class A>
-Symbolizer<A>::EntryMapT &Symbolizer<A>::processDylibCmd(
+typename Symbolizer<A>::EntryMapT &Symbolizer<A>::processDylibCmd(
     const Macho::Loader::dylib_command *dylibCmd) const {
   const std::string dylibPath(
       (char *)((uint8_t *)dylibCmd + dylibCmd->dylib.name.offset));
@@ -183,9 +187,13 @@ Symbolizer<A>::EntryMapT &Symbolizer<A>::processDylibCmd(
     return accelerator->exportsCache[dylibPath];
   }
   if (!accelerator->pathToImage.contains(dylibPath)) {
-    /// It may refer to images outside the cache, but it doesn't seem to affect
-    /// anything
-    SPDLOG_LOGGER_DEBUG(logger, "Unable to find image with path {}", dylibPath);
+    if (dylibCmd->cmd != LC_LOAD_WEAK_DYLIB) {
+      /// It may refer to images outside the cache, but it doesn't seem to
+      /// affect anything
+      SPDLOG_LOGGER_DEBUG(logger, "Unable to find image with path {}.",
+                          dylibPath);
+    }
+
     return accelerator->exportsCache[dylibPath]; // Empty map
   }
 
@@ -242,7 +250,7 @@ Symbolizer<A>::EntryMapT &Symbolizer<A>::processDylibCmd(
       } else {
         SPDLOG_LOGGER_DEBUG(logger,
                             "Unable to find parent export with name {}, for "
-                            "ReExport with name {}",
+                            "ReExport with name {}.",
                             importName, e.name);
       }
     }
@@ -282,14 +290,14 @@ Symbolizer<A>::readExports(const std::string &dylibPath,
     exportsStart = linkeditFile + dyldInfo->export_off;
     exportsEnd = exportsStart + dyldInfo->export_size;
   } else {
-    SPDLOG_LOGGER_ERROR(logger, "Unable to get exports for '{}'", dylibPath);
+    SPDLOG_LOGGER_ERROR(logger, "Unable to get exports for '{}'.", dylibPath);
     return exports;
   }
 
   if (exportsStart == exportsEnd) {
     // Some images like UIKIT don't have exports.
   } else if (!ExportInfoTrie::parseTrie(exportsStart, exportsEnd, exports)) {
-    SPDLOG_LOGGER_ERROR(logger, "Unable to read exports for '{}'", dylibPath);
+    SPDLOG_LOGGER_ERROR(logger, "Unable to read exports for '{}'.", dylibPath);
   }
 
   return exports;

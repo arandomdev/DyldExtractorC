@@ -211,7 +211,7 @@ void Context::preflightCache(const uint8_t *subCacheUUID) {
 
   header = (dyld_cache_header *)file;
 
-  if (memcmp(&"dyld", header->magic, 4)) {
+  if (memcmp("dyld", header->magic, 4)) {
     throw std::invalid_argument("Magic does not start with dyld.");
   }
   if (subCacheUUID) {

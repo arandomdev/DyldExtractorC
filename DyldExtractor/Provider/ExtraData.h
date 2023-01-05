@@ -1,49 +1,39 @@
 #ifndef __PROVIDER_EXTRADATA__
 #define __PROVIDER_EXTRADATA__
 
+#include <Macho/Loader.h>
 #include <Utils/Architectures.h>
-#include <stdint.h>
+#include <string>
 #include <vector>
 
 namespace DyldExtractor::Provider {
 
+/// @brief Contains in memory data that is added to the image. Extends a
+///   segment.
 template <class P> class ExtraData {
   using PtrT = P::PtrT;
 
 public:
-  ExtraData() = default;
-  ExtraData(PtrT addr);
+  ExtraData(std::string extendsSeg, PtrT addr, PtrT size);
   ExtraData(const ExtraData &) = delete;
   ExtraData(ExtraData &&) = default;
   ExtraData &operator=(const ExtraData &) = delete;
   ExtraData &operator=(ExtraData &&) = default;
 
-  /// @brief Add data, invalidates all pointers
-  /// @tparam T The type of data
-  /// @param newData The data
-  /// @return The address of the new data
-  template <class T> PtrT add(T newData) {
-    PtrT dataAddr = baseAddr + (PtrT)store.size();
-    auto source = reinterpret_cast<uint8_t *>(&newData);
-    store.insert(store.end(), source, source + sizeof(T));
+  /// @brief Get the beginning address.
+  PtrT getBaseAddr() const;
 
-    if (auto aligned = Utils::align(sizeof(T), sizeof(PtrT));
-        aligned != sizeof(T)) {
-      store.insert(store.end(), aligned - sizeof(T), 0x00);
-    }
+  /// @brief Get the end address.
+  PtrT getEndAddr() const;
 
-    return dataAddr;
-  }
+  uint8_t *getData();
+  const uint8_t *getData() const;
 
-  /// @brief Get a pointer to data.
-  /// @tparam T The type of data.
-  /// @param addr The address of the data
-  /// @return A pointer to the data.
-  template <class T> T *get(PtrT addr) {
-    return reinterpret_cast<T *>(store.size() + (addr - baseAddr));
-  }
+  /// @brief Get the name of the segment that this extends.
+  const std::string &getExtendsSeg() const;
 
 private:
+  std::string extendsSeg;
   PtrT baseAddr;
   std::vector<uint8_t> store;
 };

@@ -3,6 +3,7 @@
 #include "BindingV1.h"
 #include "RebaseV1.h"
 #include <Objc/Abstraction.h>
+#include <Utils/Utils.h>
 
 using namespace DyldExtractor;
 using namespace Converter;
@@ -17,7 +18,7 @@ template <class A> bool addDyldInfo(Utils::ExtractionContext<A> &eCtx) {
 
   auto &mCtx = *eCtx.mCtx;
   auto logger = eCtx.logger;
-  auto &leTracker = eCtx.leTracker;
+  auto &leTracker = eCtx.leTracker.value();
 
   Macho::Loader::dyld_info_command dyldInfo = {0};
   dyldInfo.cmd = LC_DYLD_INFO_ONLY;
@@ -29,14 +30,14 @@ template <class A> bool addDyldInfo(Utils::ExtractionContext<A> &eCtx) {
       reinterpret_cast<Macho::Loader::load_command *>(symtab),
       reinterpret_cast<Macho::Loader::load_command *>(&dyldInfo));
   if (!success) {
-    SPDLOG_LOGGER_ERROR(logger, "Unable to add dyld_info_command");
+    SPDLOG_LOGGER_ERROR(logger, "Unable to add dyld_info_command.");
     return false;
   }
 
   // Move the export trie info into dyld info
   auto exportTrieCmd = mCtx.getFirstLC<Macho::Loader::linkedit_data_command>(
       {LC_DYLD_EXPORTS_TRIE});
-  auto exportTrieMetaIt = leTracker.findTag(LETrackerTag::exportTrie);
+  auto exportTrieMetaIt = leTracker.findTag(LETrackerTag::detachedExportTrie);
   if (!exportTrieCmd || exportTrieMetaIt == leTracker.metadataEnd()) {
     return true;
   }
@@ -53,24 +54,16 @@ template <class A> bool addDyldInfo(Utils::ExtractionContext<A> &eCtx) {
   leTracker.removeLC(
       reinterpret_cast<Macho::Loader::load_command *>(exportTrieCmd));
 
-  // insert before the symbol entries
-  auto symbolEntriesIt = leTracker.findTag(LETrackerTag::symbolEntries);
-  if (symbolEntriesIt == leTracker.metadataEnd()) {
-    SPDLOG_LOGGER_ERROR(logger, "Unable to find symbol entries");
-    return false;
-  }
-
   // need to get dyld info command again because removeLC invalidates it.
-  typename Provider::LinkeditTracker<P>::Metadata exportInfoMeta(
-      LETrackerTag::exportInfo, nullptr, linkeditSize,
-      reinterpret_cast<uint8_t *>(
-          mCtx.getFirstLC<Macho::Loader::dyld_info_command>()));
-  success = leTracker
-                .insertData(symbolEntriesIt, exportInfoMeta,
-                            exportTrieData.data(), trueSize)
-                .second;
+  dyldInfoLc = reinterpret_cast<Macho::Loader::load_command *>(
+      mCtx.getFirstLC<Macho::Loader::dyld_info_command>());
+  typename Provider::LinkeditTracker<P>::Metadata exportTrieMeta(
+      LETrackerTag::exportTrie, nullptr, linkeditSize,
+      reinterpret_cast<Macho::Loader::load_command *>(dyldInfoLc));
+  success =
+      leTracker.addData(exportTrieMeta, exportTrieData.data(), trueSize).second;
   if (!success) {
-    SPDLOG_LOGGER_ERROR(logger, "Unable to add export info");
+    SPDLOG_LOGGER_ERROR(logger, "Unable to add export info.");
     return false;
   }
 
@@ -91,7 +84,11 @@ template <class A> void applyFixups(Utils::ExtractionContext<A> &eCtx) {
     auto command = seg.command;
     uint8_t *segData;
     if (strcmp(command->segname, SEG_OBJC_EXTRA) == 0) {
-      segData = eCtx.exObjc.get<uint8_t>(command->vmaddr);
+      if (!eCtx.exObjc) {
+        assert(!"Encountered Extra ObjC segment without extra objc data.");
+        return;
+      }
+      segData = eCtx.exObjc->getData();
     } else {
       segData = mCtx.convertAddrP(command->vmaddr);
     }
@@ -134,11 +131,7 @@ std::vector<uint8_t> encodeRebaseInfo(Utils::ExtractionContext<A> &eCtx) {
   auto encodedData = Encoder::encodeRebaseV1(rebaseInfo, *eCtx.mCtx);
 
   // Pointer align
-  if (auto pad = Utils::align(encodedData.size(), sizeof(A::P::PtrT)) -
-                 encodedData.size();
-      pad != 0) {
-    encodedData.insert(encodedData.end(), pad, 0x0);
-  }
+  encodedData.resize(Utils::align(encodedData.size(), sizeof(A::P::PtrT)));
   return encodedData;
 }
 
@@ -159,20 +152,20 @@ std::vector<uint8_t> encodeBindInfo(Utils::ExtractionContext<A> &eCtx) {
     }
   }
 
-  for (const auto &[addr, bind] : binds) {
-    auto &sym = bind->preferredSymbol();
-    bindInfo.emplace(addr,
-                     Encoder::BindingV1Info(
-                         BIND_TYPE_POINTER, (int)sym.ordinal, sym.name.c_str(),
-                         weakDylibOrdinals.contains(sym.ordinal), addr, 0));
+  // Add binds from opcodes first, and allow them to be overwritten
+  for (const auto &bind : eCtx.bindInfo.getBinds()) {
+    bindInfo.emplace((PtrT)bind.address,
+                     Encoder::BindingV1Info(bind.type, bind.flags, 0,
+                                            bind.libOrdinal, bind.symbolName,
+                                            bind.address, bind.addend));
   }
 
-  // Add binds from opcodes
-  for (const auto &bind : eCtx.bindInfo.getBinds()) {
+  for (const auto &[addr, bind] : binds) {
+    auto &sym = bind->preferredSymbol();
     bindInfo.insert_or_assign(
-        (PtrT)bind.address,
-        Encoder::BindingV1Info(bind.type, bind.flags, 0, bind.libOrdinal,
-                               bind.symbolName, bind.address, bind.addend));
+        addr, Encoder::BindingV1Info(
+                  BIND_TYPE_POINTER, (int)sym.ordinal, sym.name.c_str(),
+                  weakDylibOrdinals.contains(sym.ordinal), addr, 0));
   }
 
   std::vector<Encoder::BindingV1Info> bindInfoVec;
@@ -184,120 +177,93 @@ std::vector<uint8_t> encodeBindInfo(Utils::ExtractionContext<A> &eCtx) {
   auto encodedData = Encoder::encodeBindingV1(bindInfoVec, mCtx);
 
   // Pointer align
-  if (auto pad = Utils::align(encodedData.size(), sizeof(A::P::PtrT)) -
-                 encodedData.size();
-      pad != 0) {
-    encodedData.insert(encodedData.end(), pad, 0x0);
-  }
+  encodedData.resize(Utils::align(encodedData.size(), sizeof(A::P::PtrT)));
   return encodedData;
 }
 
 template <class A>
-bool addRebaseInfo(Utils::ExtractionContext<A> &eCtx,
+void addRebaseInfo(Utils::ExtractionContext<A> &eCtx,
                    std::vector<uint8_t> data) {
   using LETrackerTag = Provider::LinkeditTracker<typename A::P>::Tag;
 
   uint32_t size = (uint32_t)data.size();
-  auto &leTracker = eCtx.leTracker;
+  auto &leTracker = *eCtx.leTracker;
   auto dyldInfo = eCtx.mCtx->getFirstLC<Macho::Loader::dyld_info_command>();
-  auto rebaseInfoMetaIt = leTracker.findTag(LETrackerTag::rebaseInfo);
+  auto rebaseMetaIt = leTracker.findTag(LETrackerTag::rebase);
 
   if (!size) {
     // remove any data if necessary
-    if (rebaseInfoMetaIt != leTracker.metadataEnd()) {
-      leTracker.removeData(rebaseInfoMetaIt);
+    if (rebaseMetaIt != leTracker.metadataEnd()) {
+      leTracker.removeData(rebaseMetaIt);
     }
     dyldInfo->rebase_off = 0;
     dyldInfo->rebase_size = 0;
-    return true;
+    return;
   }
 
-  if (rebaseInfoMetaIt != leTracker.metadataEnd()) {
+  if (rebaseMetaIt != leTracker.metadataEnd()) {
     // Resize data and overwrite
-    if (auto newIt = leTracker.resizeData(rebaseInfoMetaIt, size);
-        newIt != leTracker.metadataEnd()) {
-      memcpy(newIt->data, data.data(), size);
+    if (leTracker.resizeData(rebaseMetaIt, size)) {
+      memcpy(rebaseMetaIt->data, data.data(), size);
     } else {
       SPDLOG_LOGGER_ERROR(eCtx.logger,
-                          "Unable resize data region for new rebase info");
-      return false;
+                          "Unable resize data region for new rebase info.");
+      return;
     }
 
   } else {
-    // Find position to insert rebase data, should be at the beginning of dyld
-    // info data
-    auto pos = leTracker.findTag(
-        {LETrackerTag::bindInfo, LETrackerTag::weakBindInfo,
-         LETrackerTag::lazyBindInfo, LETrackerTag::exportInfo});
-    if (pos == leTracker.metadataEnd()) {
-      pos = leTracker.metadataBegin();
-    }
-
-    if (!leTracker
-             .insertData(pos,
-                         {LETrackerTag::rebaseInfo, nullptr, size,
-                          reinterpret_cast<uint8_t *>(dyldInfo)},
-                         data.data(), size)
-             .second) {
-      SPDLOG_LOGGER_ERROR(eCtx.logger, "Unable to insert new rebase info");
-      return false;
+    typename Provider::LinkeditTracker<typename A::P>::Metadata newRebaseMeta(
+        LETrackerTag::rebase, nullptr, size,
+        reinterpret_cast<Macho::Loader::load_command *>(dyldInfo));
+    if (!leTracker.addData(newRebaseMeta, data.data(), size).second) {
+      SPDLOG_LOGGER_ERROR(eCtx.logger, "Unable to insert new rebase info.");
+      return;
     }
   }
 
   dyldInfo->rebase_size = size;
-  return true;
 }
 
 template <class A>
-bool addBindInfo(Utils::ExtractionContext<A> &eCtx, std::vector<uint8_t> data) {
+void addBindInfo(Utils::ExtractionContext<A> &eCtx, std::vector<uint8_t> data) {
   using LETrackerTag = Provider::LinkeditTracker<typename A::P>::Tag;
 
   uint32_t size = (uint32_t)data.size();
-  auto &leTracker = eCtx.leTracker;
+  auto &leTracker = *eCtx.leTracker;
   auto dyldInfo = eCtx.mCtx->getFirstLC<Macho::Loader::dyld_info_command>();
-  auto bindInfoMetaIt = leTracker.findTag(LETrackerTag::bindInfo);
+  auto bindingMetaIt = leTracker.findTag(LETrackerTag::binding);
 
   if (!size) {
     // remove any data if necessary
-    if (bindInfoMetaIt != leTracker.metadataEnd()) {
-      leTracker.removeData(bindInfoMetaIt);
+    if (bindingMetaIt != leTracker.metadataEnd()) {
+      leTracker.removeData(bindingMetaIt);
     }
     dyldInfo->bind_off = 0;
     dyldInfo->bind_size = 0;
-    return true;
+    return;
   }
 
-  if (bindInfoMetaIt != leTracker.metadataEnd()) {
+  if (bindingMetaIt != leTracker.metadataEnd()) {
     // resize data and overwrite
-    if (auto newIt = leTracker.resizeData(bindInfoMetaIt, size);
-        newIt != leTracker.metadataEnd()) {
-      memcpy(newIt->data, data.data(), size);
+    if (leTracker.resizeData(bindingMetaIt, size)) {
+      memcpy(bindingMetaIt->data, data.data(), size);
     } else {
       SPDLOG_LOGGER_ERROR(eCtx.logger,
-                          "Unable resize data region for new bind info");
-      return false;
+                          "Unable resize data region for new bind info.");
+      return;
     }
   } else {
-    // Is placed after the rebase info
-    auto pos = leTracker.findTag(LETrackerTag::rebaseInfo);
-    if (pos == leTracker.metadataEnd()) {
-      SPDLOG_LOGGER_ERROR(eCtx.logger, "Unable to find rebase info metadata");
-      return false;
-    } else {
-      if (!leTracker
-               .insertData(std::next(pos),
-                           {LETrackerTag::bindInfo, nullptr, size,
-                            reinterpret_cast<uint8_t *>(dyldInfo)},
-                           data.data(), size)
-               .second) {
-        SPDLOG_LOGGER_ERROR(eCtx.logger, "Unable to insert new rebase info");
-        return false;
-      }
+    typename Provider::LinkeditTracker<typename A::P>::Metadata newBindingMeta(
+        LETrackerTag::binding, nullptr, size,
+        reinterpret_cast<Macho::Loader::load_command *>(dyldInfo));
+    if (!leTracker.addData(newBindingMeta, data.data(), size).second) {
+      SPDLOG_LOGGER_ERROR(eCtx.logger, "Unable to insert new rebase info.");
+      return;
     }
   }
 
   dyldInfo->bind_size = size;
-  return true;
+  return;
 }
 
 /// @brief Generates and adds linkedit metadata
@@ -307,12 +273,8 @@ template <class A> void addMetadata(Utils::ExtractionContext<A> &eCtx) {
   eCtx.activity->update(std::nullopt, "Generating Bind Info");
   auto bindInfo = encodeBindInfo(eCtx);
 
-  if (!addRebaseInfo(eCtx, rebaseInfo)) {
-    return;
-  }
-  if (!addBindInfo(eCtx, bindInfo)) {
-    return;
-  }
+  addRebaseInfo(eCtx, rebaseInfo);
+  addBindInfo(eCtx, bindInfo);
 }
 
 template <class A>

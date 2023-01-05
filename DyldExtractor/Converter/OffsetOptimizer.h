@@ -4,6 +4,8 @@
 #include <Utils/Architectures.h>
 #include <Utils/ExtractionContext.h>
 
+#define SEGMENT_ALIGNMENT 0x4000
+
 namespace DyldExtractor::Converter {
 
 struct OffsetWriteProcedure {

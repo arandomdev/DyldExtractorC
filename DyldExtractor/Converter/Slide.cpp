@@ -2,6 +2,7 @@
 
 #include <Provider/PointerTracker.h>
 #include <Utils/Architectures.h>
+#include <Utils/Utils.h>
 #include <spdlog/spdlog.h>
 
 #ifdef _MSC_VER
@@ -23,14 +24,14 @@ class V1Processor {
 
 public:
   V1Processor(
-      Macho::Context<false, P> &mCtx, Logger::Activity &activity,
+      Macho::Context<false, P> &mCtx, Provider::ActivityLogger &activity,
       Provider::PointerTracker<P> &ptrTracker,
       const Provider::PointerTracker<P>::MappingSlideInfo &mapSlideInfo);
   void run();
 
 private:
   Macho::Context<false, P> &mCtx;
-  Logger::Activity &activity;
+  Provider::ActivityLogger &activity;
   Provider::PointerTracker<P> &ptrTracker;
 
   const Provider::PointerTracker<P>::MappingSlideInfo &mapInfo;
@@ -38,7 +39,7 @@ private:
 };
 
 V1Processor::V1Processor(
-    Macho::Context<false, P> &mCtx, Logger::Activity &activity,
+    Macho::Context<false, P> &mCtx, Provider::ActivityLogger &activity,
     Provider::PointerTracker<P> &ptrTracker,
     const Provider::PointerTracker<P>::MappingSlideInfo &mapSlideInfo)
     : mCtx(mCtx), activity(activity), ptrTracker(ptrTracker),
@@ -93,7 +94,8 @@ template <class P> class V2Processor {
   using PtrT = P::PtrT;
 
 public:
-  V2Processor(Macho::Context<false, P> &mCtx, Logger::Activity &activity,
+  V2Processor(Macho::Context<false, P> &mCtx,
+              Provider::ActivityLogger &activity,
               std::shared_ptr<spdlog::logger> logger,
               Provider::PointerTracker<P> &ptrTracker,
               const typename Provider::PointerTracker<P>::MappingSlideInfo
@@ -104,7 +106,7 @@ private:
   void processPage(uint64_t pageAddr, uint8_t *pageData, uint64_t pageOffset);
 
   Macho::Context<false, P> &mCtx;
-  Logger::Activity &activity;
+  Provider::ActivityLogger &activity;
   std::shared_ptr<spdlog::logger> logger;
   Provider::PointerTracker<P> &ptrTracker;
 
@@ -119,7 +121,7 @@ private:
 
 template <class P>
 V2Processor<P>::V2Processor(
-    Macho::Context<false, P> &mCtx, Logger::Activity &activity,
+    Macho::Context<false, P> &mCtx, Provider::ActivityLogger &activity,
     std::shared_ptr<spdlog::logger> logger,
     Provider::PointerTracker<P> &ptrTracker,
     const typename Provider::PointerTracker<P>::MappingSlideInfo &mapSlideInfo)
@@ -176,7 +178,7 @@ template <class P> void V2Processor<P>::run() {
         // The page starts are 32bit jumps
         processPage(pageAddr, pageData, page * 4);
       } else {
-        SPDLOG_LOGGER_ERROR(logger, "Unknown page start");
+        SPDLOG_LOGGER_ERROR(logger, "Unknown page start {:#x}.", page);
       }
 
       activity.update();
@@ -212,7 +214,7 @@ class V3Processor {
 
 public:
   V3Processor(
-      Macho::Context<false, P> &mCtx, Logger::Activity &activity,
+      Macho::Context<false, P> &mCtx, Provider::ActivityLogger &activity,
       Provider::PointerTracker<P> &ptrTracker,
       const Provider::PointerTracker<P>::MappingSlideInfo &mapSlideInfo);
   void run();
@@ -221,7 +223,7 @@ private:
   void processPage(uint64_t pageAddr, uint8_t *pageData, uint64_t delta);
 
   Macho::Context<false, P> &mCtx;
-  Logger::Activity &activity;
+  Provider::ActivityLogger &activity;
   Provider::PointerTracker<P> &ptrTracker;
 
   const Provider::PointerTracker<P>::MappingSlideInfo &mapInfo;
@@ -229,7 +231,7 @@ private:
 };
 
 V3Processor::V3Processor(
-    Macho::Context<false, P> &mCtx, Logger::Activity &activity,
+    Macho::Context<false, P> &mCtx, Provider::ActivityLogger &activity,
     Provider::PointerTracker<P> &ptrTracker,
     const Provider::PointerTracker<P>::MappingSlideInfo &mapSlideInfo)
     : mCtx(mCtx), activity(activity), ptrTracker(ptrTracker),
@@ -307,7 +309,7 @@ class V4Processor {
 
 public:
   V4Processor(
-      Macho::Context<false, P> &mCtx, Logger::Activity &activity,
+      Macho::Context<false, P> &mCtx, Provider::ActivityLogger &activity,
       std::shared_ptr<spdlog::logger> logger,
       Provider::PointerTracker<P> &ptrTracker,
       const Provider::PointerTracker<P>::MappingSlideInfo &mapSlideInfo);
@@ -317,7 +319,7 @@ private:
   void processPage(uint32_t pageAddr, uint8_t *pageData, uint32_t pageOffset);
 
   Macho::Context<false, P> &mCtx;
-  Logger::Activity &activity;
+  Provider::ActivityLogger &activity;
   std::shared_ptr<spdlog::logger> logger;
   Provider::PointerTracker<P> &ptrTracker;
 
@@ -331,7 +333,7 @@ private:
 };
 
 V4Processor::V4Processor(
-    Macho::Context<false, P> &mCtx, Logger::Activity &activity,
+    Macho::Context<false, P> &mCtx, Provider::ActivityLogger &activity,
     std::shared_ptr<spdlog::logger> logger,
     Provider::PointerTracker<P> &ptrTracker,
     const Provider::PointerTracker<P>::MappingSlideInfo &mapSlideInfo)
@@ -388,7 +390,7 @@ void V4Processor::run() {
         }
 
       } else {
-        SPDLOG_LOGGER_ERROR(logger, "Unknown page start");
+        SPDLOG_LOGGER_ERROR(logger, "Unknown page start {:#x}.", page);
       }
 
       activity.update();
@@ -470,9 +472,20 @@ void Converter::processSlideInfo(Utils::ExtractionContext<A> &eCtx) {
       break;
     }
     default:
-      throw std::logic_error(
-          fmt::format("Unknown slide info version {}", map->slideInfoVersion));
+      SPDLOG_LOGGER_ERROR(logger, "Unknown slide info version {}.",
+                          map->slideInfoVersion);
     }
+  }
+
+  // Add normal binds to tracking
+  eCtx.bindInfo.load();
+  for (const auto &bind : eCtx.bindInfo.getBinds()) {
+    ptrTracker.addBind((typename P::PtrT)bind.address,
+                       std::make_shared<Provider::SymbolicInfo>(
+                           Provider::SymbolicInfo::Symbol{
+                               std::string(bind.symbolName),
+                               (uint64_t)bind.libOrdinal, std::nullopt},
+                           Provider::SymbolicInfo::Encoding::None));
   }
 }
 

@@ -1,14 +1,20 @@
 #include "SymbolPointerCache.h"
-
-#include "Fixer.h"
+#include <Utils/Utils.h>
 
 using namespace DyldExtractor;
 using namespace Converter::Stubs;
 
 template <class A>
-SymbolPointerCache<A>::SymbolPointerCache(Fixer<A> &delegate)
-    : delegate(delegate), mCtx(delegate.mCtx), activity(delegate.activity),
-      logger(delegate.logger), bindInfo(delegate.bindInfo) {}
+SymbolPointerCache<A>::SymbolPointerCache(
+    Macho::Context<false, P> &mCtx, Provider::ActivityLogger &activity,
+    std::shared_ptr<spdlog::logger> logger,
+    const Provider::PointerTracker<P> &ptrTracker,
+    const Provider::Symbolizer<A> &symbolizer,
+    const Provider::SymbolTableTracker<P> &stTracker,
+    std::optional<Arm64Utils<A>> &arm64Utils, std::optional<ArmUtils> &armUtils)
+    : mCtx(mCtx), logger(logger), activity(activity), ptrTracker(ptrTracker),
+      symbolizer(symbolizer), stTracker(stTracker), arm64Utils(arm64Utils),
+      armUtils(armUtils) {}
 
 template <class A>
 SymbolPointerCache<A>::PointerType
@@ -19,7 +25,7 @@ SymbolPointerCache<A>::getPointerType(const auto sect) const {
 
   if (sectType == S_LAZY_SYMBOL_POINTERS) {
     if (isAuth) {
-      SPDLOG_LOGGER_ERROR(logger, "Unknown section type combination");
+      SPDLOG_LOGGER_ERROR(logger, "Unknown section type combination.");
     } else {
       return PointerType::lazy;
     }
@@ -30,7 +36,7 @@ SymbolPointerCache<A>::getPointerType(const auto sect) const {
       return PointerType::normal;
     }
   } else {
-    SPDLOG_LOGGER_ERROR(logger, "Unexpected section type {:#x}", sectType);
+    SPDLOG_LOGGER_ERROR(logger, "Unexpected section type {:#x}.", sectType);
   }
 
   return PointerType::normal;
@@ -38,14 +44,13 @@ SymbolPointerCache<A>::getPointerType(const auto sect) const {
 
 template <class A> void SymbolPointerCache<A>::scanPointers() {
   activity.update(std::nullopt, "Scanning Symbol Pointers");
-  const auto bindRecords = getBindRecords();
 
   mCtx.enumerateSections(
       [](auto seg, auto sect) {
         return (sect->flags & SECTION_TYPE) == S_NON_LAZY_SYMBOL_POINTERS ||
                (sect->flags & SECTION_TYPE) == S_LAZY_SYMBOL_POINTERS;
       },
-      [this, &bindRecords](auto seg, auto sect) {
+      [this](auto seg, auto sect) {
         auto pType = getPointerType(sect);
 
         uint32_t indirectI = sect->reserved1;
@@ -55,26 +60,28 @@ template <class A> void SymbolPointerCache<A>::scanPointers() {
 
           std::set<Provider::SymbolicInfo::Symbol> symbols;
 
-          // Bind records
-          if (bindRecords.contains(pAddr)) {
-            auto &record = bindRecords.at(pAddr);
-            symbols.insert({std::string(record.symbolName),
-                            (uint64_t)record.libOrdinal, std::nullopt});
-          }
-
           // Check indirect entry
-          if (const auto [entry, string] =
-                  delegate.lookupIndirectEntry(indirectI);
-              entry) {
-            uint64_t ordinal = GET_LIBRARY_ORDINAL(entry->n_desc);
-            symbols.insert({std::string(string), ordinal, std::nullopt});
+          if (indirectI >= stTracker.indirectSyms.size()) {
+            SPDLOG_LOGGER_WARN(logger,
+                               "Unable to symbolize stub via indirect symbols "
+                               "as the index overruns the entries.");
+          } else {
+            const auto &[strIt, entry] =
+                stTracker.getSymbol(stTracker.indirectSyms.at(indirectI));
+            uint64_t ordinal = GET_LIBRARY_ORDINAL(entry.n_desc);
+            symbols.insert({*strIt, ordinal, std::nullopt});
           }
 
           // The pointer's target function
-          if (const auto pTarget = delegate.ptrTracker.slideP(pAddr); pTarget) {
-            const auto pFunc = delegate.resolveStubChain(pTarget);
-            if (const auto set = delegate.symbolizer.symbolizeAddr(pFunc & -4);
-                set) {
+          if (const auto pTarget = ptrTracker.slideP(pAddr); pTarget) {
+            PtrT pFunc;
+            if constexpr (std::is_same_v<A, Utils::Arch::arm64> ||
+                          std::is_same_v<A, Utils::Arch::arm64_32>) {
+              pFunc = arm64Utils->resolveStubChain(pTarget);
+            } else if constexpr (std::is_same_v<A, Utils::Arch::arm>) {
+              pFunc = armUtils->resolveStubChain(pTarget);
+            }
+            if (const auto set = symbolizer.symbolizeAddr(pFunc & -4); set) {
               symbols.insert(set->symbols.begin(), set->symbols.end());
             }
           }
@@ -100,7 +107,7 @@ template <class A> void SymbolPointerCache<A>::scanPointers() {
               break;
 
             default:
-              break;
+              Utils::unreachable();
             }
           }
         }
@@ -125,8 +132,7 @@ bool SymbolPointerCache<A>::isAvailable(PointerType pType, PtrT addr) {
     break;
 
   default:
-    return false;
-    break;
+    Utils::unreachable();
   }
 }
 
@@ -145,8 +151,7 @@ void SymbolPointerCache<A>::namePointer(PointerType pType, PtrT addr,
     break;
 
   default:
-    assert(!"Unknown pointer type");
-    return;
+    Utils::unreachable();
   }
 
   addPointerInfo(pType, addr, info);
@@ -178,26 +183,8 @@ SymbolPointerCache<A>::getPointerInfo(PointerType pType, PtrT addr) const {
     }
 
   default:
-    assert(!"Unknown pointer type");
-    return nullptr;
+    Utils::unreachable();
   }
-}
-
-template <class A>
-std::map<typename SymbolPointerCache<A>::PtrT, Provider::BindRecord>
-SymbolPointerCache<A>::getBindRecords() {
-  std::map<PtrT, Provider::BindRecord> bindRecords;
-  for (const auto &record : bindInfo.getBinds()) {
-    bindRecords[(PtrT)record.address] = record;
-  }
-  for (const auto &record : bindInfo.getLazyBinds()) {
-    bindRecords[(PtrT)record.second.address] = record.second;
-  }
-  for (const auto &record : bindInfo.getWeakBinds()) {
-    bindRecords[(PtrT)record.address] = record;
-  }
-
-  return bindRecords;
 }
 
 template <class A>
@@ -222,8 +209,7 @@ void SymbolPointerCache<A>::addPointerInfo(PointerType pType, PtrT pAddr,
     break;
 
   default:
-    assert(!"Unknown Pointer Type");
-    break;
+    Utils::unreachable();
   }
 
   // Add to normal cache

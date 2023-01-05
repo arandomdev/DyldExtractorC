@@ -33,7 +33,8 @@ public:
     PtrT size;
   };
 
-  Arm64Utils(const Utils::ExtractionContext<A> &eCtx);
+  Arm64Utils(const Dyld::Context &dCtx, Provider::Accelerator<P> &accelerator,
+             const Provider::PointerTracker<P> &ptrTracker);
 
   /// @brief Check if it is a stub binder
   /// @param addr Address to the bind, usually start of the __stub_helper sect.

@@ -1,6 +1,7 @@
 #include "RebaseV1.h"
 
-#include "Utils/Leb128.h"
+#include <Utils/Leb128.h>
+#include <Utils/Utils.h>
 
 using namespace DyldExtractor;
 using namespace Converter;
@@ -205,9 +206,7 @@ Encoder::encodeRebaseV1(const std::vector<RebaseV1Info> &info,
   }
 
   // align to pointer size
-  auto padSize =
-      Utils::align(encodedData.size(), sizeof(PtrT)) - encodedData.size();
-  encodedData.insert(encodedData.end(), padSize, 0x0);
+  encodedData.resize(Utils::align(encodedData.size(), sizeof(PtrT)));
   return encodedData;
 }
 

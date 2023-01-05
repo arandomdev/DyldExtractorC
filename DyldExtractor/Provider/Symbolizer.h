@@ -1,8 +1,9 @@
 #ifndef __PROVIDER_SYMBOLIZER__
 #define __PROVIDER_SYMBOLIZER__
 
+#include "ActivityLogger.h"
+#include "SymboltableTracker.h"
 #include <Dyld/Context.h>
-#include <Logger/Activity.h>
 #include <Macho/Context.h>
 #include <Provider/Accelerator.h>
 #include <fmt/format.h>
@@ -60,12 +61,12 @@ template <class A> class Symbolizer {
 
 public:
   Symbolizer(const Dyld::Context &dCtx, Macho::Context<false, P> &mCtx,
-             Logger::Activity &activity, std::shared_ptr<spdlog::logger> logger,
-             Provider::Accelerator<P> &accelerator);
+             Provider::Accelerator<P> &accelerator,
+             Provider::ActivityLogger &activity,
+             std::shared_ptr<spdlog::logger> logger,
+             const Provider::SymbolTableTracker<P> &stTracker);
   Symbolizer(const Symbolizer &) = delete;
   Symbolizer &operator=(const Symbolizer &) = delete;
-
-  void enumerate();
 
   /// @brief Look for a symbol
   /// @param addr The address of the symbol. Without instruction bits.
@@ -85,6 +86,9 @@ public:
 private:
   void enumerateExports();
   void enumerateSymbols();
+  void processSymbolCache(
+      const typename Provider::SymbolTableTracker<P>::SymbolCaches::SymbolCacheT
+          &symCache);
 
   using ExportEntry = Provider::AcceleratorTypes::SymbolizerExportEntry;
   using EntryMapT = Provider::AcceleratorTypes::SymbolizerExportEntryMapT;
@@ -96,23 +100,16 @@ private:
 
   const Dyld::Context *dCtx;
   Macho::Context<false, P> *mCtx;
-  Logger::Activity *activity;
-  std::shared_ptr<spdlog::logger> logger;
   Provider::Accelerator<P> *accelerator;
+  Provider::ActivityLogger *activity;
+  std::shared_ptr<spdlog::logger> logger;
+  const Provider::SymbolTableTracker<P> *stTracker;
 
   std::map<PtrT, std::shared_ptr<SymbolicInfo>> symbols;
+
+  bool dataLoaded = false;
 };
 
 } // namespace DyldExtractor::Provider
-
-template <>
-struct fmt::formatter<DyldExtractor::Provider::SymbolicInfo::Symbol>
-    : formatter<std::string> {
-  template <typename FormatContext>
-  auto format(DyldExtractor::Provider::SymbolicInfo::Symbol sym,
-              FormatContext &ctx) {
-    return formatter<std::string>::format(sym.name, ctx);
-  }
-};
 
 #endif // __PROVIDER_SYMBOLIZER__

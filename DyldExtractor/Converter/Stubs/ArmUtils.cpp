@@ -4,9 +4,10 @@ using namespace DyldExtractor;
 using namespace Converter;
 using namespace Stubs;
 
-ArmUtils::ArmUtils(Utils::ExtractionContext<A> &eCtx)
-    : dCtx(*eCtx.dCtx), accelerator(*eCtx.accelerator),
-      ptrTracker(eCtx.ptrTracker) {
+ArmUtils::ArmUtils(const Dyld::Context &dCtx,
+                   Provider::Accelerator<P> &accelerator,
+                   const Provider::PointerTracker<P> &ptrTracker)
+    : dCtx(dCtx), accelerator(accelerator), ptrTracker(ptrTracker) {
   stubResolvers = {
       {StubFormat::normalV4, [this](PtrT a) { return getNormalV4Target(a); }},
       {StubFormat::optimizedV5,

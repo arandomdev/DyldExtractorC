@@ -1,12 +1,12 @@
 #ifndef __CONVERTER_STUBS_SYMBOLPOINTERCACHE__
 #define __CONVERTER_STUBS_SYMBOLPOINTERCACHE__
 
-#include <Provider/BindInfo.h>
+#include "Arm64Utils.h"
+#include "ArmUtils.h"
+#include <Provider/SymbolTableTracker.h>
 #include <Provider/Symbolizer.h>
 
 namespace DyldExtractor::Converter::Stubs {
-
-template <class A> class Fixer;
 
 template <class A> class SymbolPointerCache {
   using P = A::P;
@@ -19,7 +19,14 @@ public:
     auth    // Commonly in __auth_got
   };
 
-  SymbolPointerCache(Fixer<A> &delegate);
+  SymbolPointerCache(Macho::Context<false, P> &mCtx,
+                     Provider::ActivityLogger &activity,
+                     std::shared_ptr<spdlog::logger> logger,
+                     const Provider::PointerTracker<P> &ptrTracker,
+                     const Provider::Symbolizer<A> &symbolizer,
+                     const Provider::SymbolTableTracker<P> &stTracker,
+                     std::optional<Arm64Utils<A>> &arm64Utils,
+                     std::optional<ArmUtils> &armUtils);
   PointerType getPointerType(const auto sect) const;
   void scanPointers();
 
@@ -60,15 +67,18 @@ public:
   } used;
 
 private:
-  std::map<PtrT, Provider::BindRecord> getBindRecords();
   void addPointerInfo(PointerType pType, PtrT pAddr,
                       const Provider::SymbolicInfo &info);
 
-  Fixer<A> &delegate;
   Macho::Context<false, P> &mCtx;
-  Logger::Activity &activity;
+  Provider::ActivityLogger &activity;
   std::shared_ptr<spdlog::logger> logger;
-  Provider::BindInfo<P> &bindInfo;
+  const Provider::PointerTracker<P> &ptrTracker;
+  const Provider::Symbolizer<A> &symbolizer;
+  const Provider::SymbolTableTracker<P> &stTracker;
+
+  std::optional<Arm64Utils<A>> &arm64Utils;
+  std::optional<ArmUtils> &armUtils;
 };
 
 } // namespace DyldExtractor::Converter::Stubs

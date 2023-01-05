@@ -5,9 +5,10 @@ using namespace Converter;
 using namespace Stubs;
 
 template <class A>
-Arm64Utils<A>::Arm64Utils(const Utils::ExtractionContext<A> &eCtx)
-    : dCtx(*eCtx.dCtx), ptrTracker(eCtx.ptrTracker),
-      accelerator(*eCtx.accelerator) {
+Arm64Utils<A>::Arm64Utils(const Dyld::Context &dCtx,
+                          Provider::Accelerator<P> &accelerator,
+                          const Provider::PointerTracker<P> &ptrTracker)
+    : dCtx(dCtx), ptrTracker(ptrTracker), accelerator(accelerator) {
 
   stubResolvers = {
       {StubFormat::StubNormal,
